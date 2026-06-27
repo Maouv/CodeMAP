@@ -4,6 +4,8 @@
 > Status: Ready for Phase 1 implementation  
 > Author: Maou + Claude planning session
 
+> **Architect Review**: [`architect-review.md`](./architect-review.md) — AST edge cases, FastAPI bottlenecks, D3 performance limits, rekomendasi arsitektur. Wajib dibaca.
+
 ---
 
 ## 1. Project Overview

@@ -454,9 +454,601 @@ Font: **Sora** (UI) + **JetBrains Mono** (code/paths). Canvas renderer pakai `--
 - Cmd+K → search overlay
 - F → fit graph to viewport
 
-### Error States (dari UX Agent — akan diisi)
+### Error States
 
-*Section ini akan diisi oleh UX Agent dengan spec error states lengkap.*
+Error states dibagi tiga layer: **CLI/terminal** (sebelum server up), **browser/frontend** (setelah server up), dan **dalam-panel** (saat interaksi AI). Setiap state punya: apa yang user lihat, copy teks exact, dan recovery action.
+
+---
+
+#### E1 — Scan Errors (CLI layer, sebelum browser terbuka)
+
+---
+
+**E1.1 — Port sudah dipakai**
+
+Trigger: `OSError: [Errno 98] Address already in use`
+
+Terminal output:
+```
+codemap v0.1.0
+
+  ✗ Port 8765 is already in use.
+
+  Try:
+    codemap . --port 8766
+    codemap . --port 8080
+
+  Or find what's using it:
+    lsof -i :8765       (macOS / Linux)
+    netstat -ano | findstr :8765   (Windows)
+```
+
+Recovery: User re-run dengan `--port` berbeda. Tidak ada auto-retry ke port lain — ini keputusan user, bukan tool.
+
+**Tidak boleh**: Auto-bind ke port random tanpa memberitahu user. User perlu tau URL yang harus dibuka.
+
+---
+
+**E1.2 — Directory tidak ada**
+
+Trigger: `FileNotFoundError` atau path argument tidak resolve.
+
+Terminal output:
+```
+codemap v0.1.0
+
+  ✗ Directory not found: ./src/nonexistent
+
+  Make sure the path exists and try again.
+```
+
+Recovery: Tidak ada — user harus fix path. Exit code 1.
+
+---
+
+**E1.3 — Permission denied**
+
+Trigger: `PermissionError` saat `os.listdir()` atau `open()` file.
+
+Terminal output:
+```
+codemap v0.1.0
+
+  ✗ Cannot read directory ./private — permission denied.
+
+  Try running with appropriate permissions, or scan
+  a directory you have read access to.
+```
+
+Recovery: Tidak ada automated — user harus fix permission. Exit code 1.
+
+---
+
+**E1.4 — Zero .py files found**
+
+Trigger: Scan selesai, `total_files == 0`.
+
+Terminal output:
+```
+codemap v0.1.0
+
+  Scanning ./node_modules...
+  └── No Python files found.
+
+  ✗ Nothing to visualize. Make sure you're pointing
+    to a directory that contains .py files.
+
+  Example:
+    codemap ./src
+    codemap ./app
+```
+
+Recovery: Tidak ada — exit tanpa membuka browser. Exit code 0 (bukan error, hanya tidak ada data). Jangan exit code 1 karena bukan crash.
+
+---
+
+**E1.5 — File corrupt / SyntaxError saat parse**
+
+Trigger: `SyntaxError` di `safe_parse()`. Satu atau beberapa file tidak bisa di-parse.
+
+**Ini bukan fatal error** — tool tetap jalan dengan file yang berhasil di-parse.
+
+Terminal output (partial failures):
+```
+codemap v0.1.0
+
+  Scanning ./src...
+  ├── Found 11 files (1 skipped)
+  ├── Found 42 functions
+  ├── Found 76 import relationships
+  └── Risk analysis complete: 2 high, 3 medium
+
+  ⚠ 1 file skipped due to parse errors:
+    • utils/broken.py — SyntaxError on line 47
+
+  Server running at http://localhost:8765
+  Opening browser...
+
+  Press Ctrl+C to stop
+```
+
+Di browser — Warning Banner:
+```
+⚠  1 file could not be parsed  [show details ▾]
+```
+
+Expanded:
+```
+syntax_error   utils/broken.py:47   Invalid syntax — file excluded from graph
+```
+
+Recovery: User perlu fix file tersebut, lalu re-run `codemap`. Tidak ada auto-retry.
+
+---
+
+**E1.6 — File terlalu besar (>1MB)**
+
+Trigger: `safe_parse()` size guard. Treated sama seperti SyntaxError — skip + warning.
+
+Terminal output (sama pattern dengan E1.5):
+```
+  ⚠ 1 file skipped:
+    • generated/migrations.py — file too large (4.2MB, limit 1MB)
+```
+
+Di browser — Warning Banner entry:
+```
+file_too_large   generated/migrations.py   4.2MB exceeds 1MB limit — excluded
+```
+
+---
+
+**E1.7 — Scan crash di tengah jalan (partial results)**
+
+Trigger: Unexpected exception di scanner loop — bukan per-file SyntaxError, tapi crash di level scanner itu sendiri.
+
+Ini adalah **unexpected error**. Bedain dari E1.5 yang partial failure by design.
+
+Terminal output:
+```
+codemap v0.1.0
+
+  Scanning ./src...
+  ├── Found 7 files
+  ├── Analyzing...
+
+  ✗ Scan crashed unexpectedly.
+
+  Partial results (7 of ~12 estimated files) are available.
+  The graph may be incomplete.
+
+  Server running at http://localhost:8765 (partial data)
+  Opening browser...
+
+  Please report this at: github.com/Maouv/CodeMAP/issues
+  Include: codemap --version output + error below
+
+  Error: [exception type and message — sanitized, no paths]
+```
+
+Di browser — Warning Banner (merah, bukan amber — ini lebih serius dari warning biasa):
+```
+🔴  Scan incomplete — partial results only  [show details ▾]
+```
+
+Expanded:
+```
+scan_crash   Scanner stopped unexpectedly after processing 7 files.
+             Graph may be missing nodes and edges.
+             Re-run codemap to attempt a full scan.
+```
+
+Graph tetap di-render dengan data yang ada. User tidak di-block.
+
+Recovery action di banner: `[Re-run scan]` button → trigger reload halaman (user harus manual re-run dari terminal, button ini hanya hint).
+
+---
+
+#### E2 — AI Error States (dalam-panel, saat user klik [Generate AI Insight])
+
+Semua AI errors muncul di dalam AI result area di side panel. Tidak ada modal, tidak ada redirect.
+
+---
+
+**E2.1 — API key tidak ada (graceful disable)**
+
+Trigger: `get_provider()` returns `None` — tidak ada env var.
+
+Button state: disabled, greyed out.
+
+```
+[✦ Generate AI Insight]   ← disabled, opacity 0.35
+```
+
+Hover tooltip pada button:
+```
+Set ANTHROPIC_API_KEY or OPENAI_API_KEY to enable AI features.
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Tidak ada error card — ini adalah expected state, bukan error.
+
+---
+
+**E2.2 — API key invalid (401)**
+
+Trigger: Provider returns 401 / `AuthenticationError`.
+
+AI result area:
+```
+┌─────────────────────────────────────────────────┐
+│  ✦ AI Insight — Authentication Failed            │
+│  ─────────────────────────────────────────────── │
+│  Your API key was rejected by [anthropic/openai]. │
+│                                                  │
+│  Check that your key is valid and active:        │
+│  export ANTHROPIC_API_KEY=sk-ant-...             │
+│                                                  │
+│  Then restart codemap.                           │
+└─────────────────────────────────────────────────┘
+```
+
+Button kembali ke default state — user bisa retry setelah fix key dan restart.
+
+**Penting**: Jangan tampilkan key fragment di error message. Exception dari provider di-sanitize sebelum ditampilkan.
+
+---
+
+**E2.3 — Rate limited (429)**
+
+Trigger: Provider returns 429 / `RateLimitError`.
+
+AI result area:
+```
+┌─────────────────────────────────────────────────┐
+│  ✦ AI Insight — Rate Limited                     │
+│  ─────────────────────────────────────────────── │
+│  Too many requests to [anthropic/openai].        │
+│  Please wait a moment before trying again.       │
+│                                                  │
+│                          [↻ Retry in 30s]        │
+└─────────────────────────────────────────────────┘
+```
+
+Retry button: countdown timer 30s, lalu aktif. Auto-retry tidak dilakukan — user yang trigger.
+
+Kalau provider return `Retry-After` header → gunakan nilai itu untuk countdown, bukan hardcode 30s.
+
+---
+
+**E2.4 — Request timeout**
+
+Trigger: AI call tidak response dalam 30 detik (configurable via `AI_TIMEOUT` env, default 30s).
+
+AI result area:
+```
+┌─────────────────────────────────────────────────┐
+│  ✦ AI Insight — Request Timed Out               │
+│  ─────────────────────────────────────────────── │
+│  The AI provider took too long to respond.       │
+│                                                  │
+│                               [↻ Try Again]      │
+└─────────────────────────────────────────────────┘
+```
+
+Recovery: Retry button, immediate. Tidak ada countdown.
+
+---
+
+**E2.5 — Network offline / connection refused**
+
+Trigger: `httpx.ConnectError`, `httpx.NetworkError`, atau DNS resolution failure.
+
+AI result area:
+```
+┌─────────────────────────────────────────────────┐
+│  ✦ AI Insight — No Connection                   │
+│  ─────────────────────────────────────────────── │
+│  Could not reach [anthropic/openai].             │
+│  Check your internet connection and try again.   │
+│                                                  │
+│                               [↻ Try Again]      │
+└─────────────────────────────────────────────────┘
+```
+
+---
+
+**E2.6 — Provider server error (5xx)**
+
+Trigger: Provider returns 500/502/503.
+
+AI result area:
+```
+┌─────────────────────────────────────────────────┐
+│  ✦ AI Insight — Provider Error                  │
+│  ─────────────────────────────────────────────── │
+│  [anthropic/openai] returned a server error.     │
+│  This is likely temporary.                       │
+│                                                  │
+│                               [↻ Try Again]      │
+└─────────────────────────────────────────────────┘
+```
+
+---
+
+**E2.7 — Unexpected AI response format**
+
+Trigger: Provider response tidak bisa di-parse menjadi `{role, importance, hidden_assumption}` dict.
+
+AI result area:
+```
+┌─────────────────────────────────────────────────┐
+│  ✦ AI Insight — Unexpected Response              │
+│  ─────────────────────────────────────────────── │
+│  The AI returned an unrecognized format.         │
+│  Raw response:                                   │
+│  [truncated response text, max 200 chars]        │
+│                                                  │
+│  Please report this at github.com/Maouv/CodeMAP  │
+└─────────────────────────────────────────────────┘
+```
+
+Ini developer-facing error. Tampilkan raw response (truncated) untuk debugging.
+
+---
+
+#### E3 — Runtime Error States (browser layer)
+
+---
+
+**E3.1 — Graph terlalu besar (>2000 nodes)**
+
+Trigger: `meta.total_files > 2000` dalam graph JSON response.
+
+**Ini bukan hard error** — graph masih di-render. Ini adalah performance warning.
+
+Warning Banner (amber):
+```
+⚠  Large graph: 2,847 nodes detected  [show details ▾]
+```
+
+Expanded:
+```
+performance_warning   Graph with 2,847 nodes may render slowly on some machines.
+                      
+                      Tips:
+                      • Use filters (High Risk / Dead Code) to focus view
+                      • Scan a subdirectory instead: codemap ./src/core
+                      • Use Cmd+K to navigate directly to specific files
+```
+
+Graph tetap di-render. Tidak ada hard limit — ini hanya informasi.
+
+**Di terminal juga muncul** (setelah scan selesai, sebelum server start):
+```
+  ⚠ Large codebase: 2,847 files found.
+    Browser rendering may be slow.
+    Consider scanning a subdirectory: codemap ./src/core
+```
+
+---
+
+**E3.2 — Cache corrupt / unreadable**
+
+Trigger: `.codemap/cache.json` ada tapi tidak bisa di-parse (`json.JSONDecodeError`, `PermissionError`, atau schema version mismatch).
+
+**Ini bukan fatal** — tool berjalan normal, cache di-reset.
+
+Terminal output (saat startup):
+```
+  ⚠ Cache at .codemap/cache.json is corrupt — resetting.
+    Previous AI insights will need to be regenerated.
+```
+
+Tidak ada user-facing error di browser untuk ini. AI Insight button tetap available — hanya cache hilang.
+
+Behavior di `cache.py`:
+```python
+def load_cache() -> dict:
+    try:
+        data = json.loads(cache_path.read_text())
+        if data.get("version") != CACHE_VERSION:
+            raise ValueError("version mismatch")
+        return data
+    except (json.JSONDecodeError, KeyError, ValueError, PermissionError):
+        logger.warning("Cache corrupt — resetting")
+        cache_path.write_text(json.dumps({"version": CACHE_VERSION, "entries": {}}))
+        cache_path.chmod(0o600)
+        return {"version": CACHE_VERSION, "entries": {}}
+```
+
+---
+
+**E3.3 — `/api/graph` gagal (server error)**
+
+Trigger: Frontend fetch ke `GET /api/graph` return non-200, atau network error ke localhost.
+
+Ini seharusnya sangat jarang — server dan frontend dalam process yang sama.
+
+Browser menampilkan full-screen error state (replace loading state):
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                                                          │
+│                      ◇ codemap                           │
+│                                                          │
+│               Failed to load graph data                  │
+│                                                          │
+│  The local server returned an error.                     │
+│                                                          │
+│  Try stopping and restarting codemap:                    │
+│  Ctrl+C, then: codemap .                                 │
+│                                                          │
+│  If this keeps happening, please report at:              │
+│  github.com/Maouv/CodeMAP/issues                         │
+│                                                          │
+│                    [↻ Retry]                             │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+Retry button: re-fetch `/api/graph` setelah 2 detik delay.
+
+---
+
+**E3.4 — Graph JSON malformed (schema mismatch)**
+
+Trigger: Server return 200 tapi JSON tidak conform ke expected schema (missing `nodes`, `edges`, `meta`).
+
+Ini adalah developer-facing error — hanya muncul kalau ada bug di backend.
+
+Browser:
+```
+┌──────────────────────────────────────────────────────────┐
+│                                                          │
+│                      ◇ codemap                           │
+│                                                          │
+│              Unexpected graph data format                │
+│                                                          │
+│  The server returned data in an unrecognized format.     │
+│  This is likely a version mismatch.                      │
+│                                                          │
+│  Make sure you're running the latest version:            │
+│  pip install --upgrade codemap                           │
+│                                                          │
+│  Please report at: github.com/Maouv/CodeMAP/issues       │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+---
+
+#### Error State Visual Spec (Frontend)
+
+**Error card dalam panel** (AI errors E2.x):
+```css
+.error-card {
+  margin-top: var(--space-3);
+  padding: var(--space-4);
+  background: oklch(58% 0.22 25 / 0.06);
+  border: 1px solid oklch(58% 0.22 25 / 0.25);
+  border-radius: var(--radius-md);
+}
+
+.error-card-title {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  color: var(--risk-high);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: var(--space-2);
+}
+
+.error-card-body {
+  font-size: var(--text-sm);
+  color: var(--ink-secondary);
+  line-height: 1.6;
+}
+
+.error-card-code {
+  font-family: var(--font-code);
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+  margin-top: var(--space-2);
+}
+
+.error-retry-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--space-3);
+  padding: 6px 12px;
+  border-radius: var(--radius-full);
+  background: var(--bg-elevated);
+  border: 1px solid var(--bg-border);
+  color: var(--ink-secondary);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  cursor: pointer;
+  float: right;
+  transition: all 120ms ease-out;
+}
+
+.error-retry-btn:hover {
+  background: var(--bg-border);
+  color: var(--ink-primary);
+}
+```
+
+**Full-screen error state** (E3.3, E3.4):
+```css
+.error-screen {
+  /* sama dengan .empty-state layout */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: var(--space-10);
+  text-align: center;
+  gap: var(--space-4);
+}
+
+.error-screen-icon {
+  width: 40px;
+  height: 40px;
+  color: var(--risk-high);
+  opacity: 0.6;
+}
+
+.error-screen-title {
+  font-size: var(--text-lg);
+  font-weight: 700;
+  color: var(--ink-primary);
+}
+
+.error-screen-body {
+  font-size: var(--text-sm);
+  color: var(--ink-secondary);
+  line-height: 1.7;
+  max-width: 360px;
+}
+
+.error-screen-cmd {
+  font-family: var(--font-code);
+  font-size: var(--text-sm);
+  color: var(--ink-secondary);
+  background: var(--bg-surface);
+  border: 1px solid var(--bg-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-4);
+}
+```
+
+---
+
+#### Error State Summary Table
+
+| ID | Layer | Trigger | Fatal? | Recovery |
+|----|-------|---------|--------|----------|
+| E1.1 | CLI | Port in use | Yes | `--port` flag |
+| E1.2 | CLI | Directory not found | Yes | Fix path |
+| E1.3 | CLI | Permission denied | Yes | Fix permissions |
+| E1.4 | CLI | Zero .py files | Soft (exit 0) | Scan different dir |
+| E1.5 | CLI+Browser | SyntaxError per file | No (partial) | Fix file, re-run |
+| E1.6 | CLI+Browser | File >1MB | No (partial) | Split file or ignore |
+| E1.7 | CLI+Browser | Scan crash | No (partial) | Re-run, report bug |
+| E2.1 | Panel | No API key | No (disabled) | Set env var, restart |
+| E2.2 | Panel | API key invalid (401) | No | Fix key, restart |
+| E2.3 | Panel | Rate limited (429) | No | Wait + retry |
+| E2.4 | Panel | AI timeout | No | Retry |
+| E2.5 | Panel | Network offline | No | Check connection, retry |
+| E2.6 | Panel | Provider 5xx | No | Retry |
+| E2.7 | Panel | Bad response format | No | Report bug |
+| E3.1 | Browser | >2000 nodes | No (warning) | Filter / subdirectory |
+| E3.2 | Startup | Cache corrupt | No (auto-reset) | None needed |
+| E3.3 | Browser | /api/graph 500 | Yes | Restart codemap |
+| E3.4 | Browser | JSON schema mismatch | Yes | Upgrade codemap |
 
 ---
 

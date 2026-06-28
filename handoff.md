@@ -1,10 +1,8 @@
-# codemap — Project Handoff Document
+# CodeMAP — Blueprint
 
-> Generated from planning session: 2026-06-27  
-> Status: Ready for Phase 1 implementation  
-> Author: Maou + Claude planning session
-
-> **Architect Review**: [`architect-review.md`](./architect-review.md) — AST edge cases, FastAPI bottlenecks, D3 performance limits, rekomendasi arsitektur. Wajib dibaca.
+> Status: Living Document — Source of Truth  
+> Last updated: 2026-06-28  
+> Contributors: Maou, Architect Agent, Security Agent, Packaging Agent, UX Agent
 
 ---
 
@@ -56,14 +54,14 @@ Bukan documentation generator. Bukan AI explainer. Tapi **living map of a codeba
 ### AI Provider support
 
 ```bash
+# Anthropic (default kalau keduanya ada)
+export ANTHROPIC_API_KEY=sk-ant-...
+
 # OpenAI
 export OPENAI_API_KEY=sk-...
-
-# Anthropic
-export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-Tool detect otomatis key mana yang tersedia. Kalau keduanya ada, default ke Anthropic. Kalau tidak ada key sama sekali, AI features disabled gracefully — tool tetap fully functional tanpa AI.
+Tool detect otomatis key mana yang tersedia. Kalau tidak ada key sama sekali, AI features disabled gracefully — tool tetap fully functional tanpa AI.
 
 ---
 
@@ -80,86 +78,125 @@ CLI (Python / Typer)
     │       └── Output: risk flags per function
     │
     ├── Server (FastAPI — serve frontend + API endpoints)
-    │       └── GET /api/graph → return graph JSON
+    │       └── GET /api/graph  → return graph JSON
     │       └── POST /api/ai/summary → trigger AI call
     │
-    └── Frontend (Vanilla JS + D3.js)
+    └── Frontend (Vanilla JS + D3.js Canvas renderer)
             └── Render interactive graph
             └── Side panel for drill down
             └── AI summary on demand
 ```
 
-### Why this stack
+### Stack decisions
 
-- **Python AST (built-in):** Zero external dependency untuk core parsing. `ast` module native Python, deterministic, reliable.
-- **FastAPI:** Lightweight, async, bisa serve static files sekaligus. Tidak perlu dua process.
-- **D3.js:** Full control atas visual. Force-directed graph dengan custom node/edge styling. Tantangan yang disengaja untuk kontrol penuh.
-- **Vanilla JS (no React):** Mengurangi complexity frontend. D3 lebih natural di vanilla JS daripada di React.
+- **Python AST (built-in):** Zero external dependency untuk core parsing. Deterministic, reliable.
+- **FastAPI:** Lightweight, async, serve static files + API dalam satu process.
+- **D3.js + Canvas2D:** Full control visual. Canvas renderer (bukan SVG) — keputusan final dari architect review untuk support 2000+ nodes.
+- **Vanilla JS (no React, no build step):** Constraint dari distribusi PyPI. `pip install codemap` harus langsung jalan tanpa Node.js dependency.
+- **Uvicorn hardcoded ke `host="127.0.0.1"`:** Keputusan security — tidak boleh bind ke 0.0.0.0.
+
+### AST Parser — Hybrid Approach (dari Architect Review)
+
+```
+Layer 1: AST static analysis     →  80% cases (import, class, function, decorator)
+Layer 2: Runtime import probe    →  metaclass, conditional import
+Layer 3: C extension scanner     →  deteksi .so/.pyd, fallback ke warning
+Layer 4: Type annotation resolver →  typing.get_type_hints() + string eval
+```
+
+Setiap layer adalah enhancement — Layer 1 wajib di Phase 1, Layer 2-4 bisa Phase berikutnya.
 
 ---
 
-## 5. File Structure
+## 5. File Structure (Final)
 
 ```
 codemap/
 ├── codemap/
-│   ├── __init__.py
-│   ├── cli.py                  # Entry point — Typer CLI
+│   ├── __init__.py                 # __version__ = "0.1.0"
+│   ├── cli.py                      # Entry point — Typer CLI
 │   ├── scanner/
 │   │   ├── __init__.py
-│   │   ├── ast_parser.py       # Core AST traversal logic
-│   │   ├── resolver.py         # Resolve relative imports → absolute paths
-│   │   ├── risk_analyzer.py    # Static risk detection
-│   │   └── graph_builder.py    # Assemble final graph JSON
+│   │   ├── ast_parser.py           # Core AST traversal + safe_parse()
+│   │   ├── resolver.py             # Resolve relative imports → absolute paths
+│   │   ├── risk_analyzer.py        # Static risk detection
+│   │   └── graph_builder.py        # Assemble + sanitize final graph JSON
 │   ├── server/
 │   │   ├── __init__.py
-│   │   └── app.py              # FastAPI app — serve frontend + /api routes
+│   │   └── app.py                  # FastAPI — StaticFiles + /api routes + security middleware
 │   └── ai/
 │       ├── __init__.py
-│       ├── provider.py         # Abstraction: OpenAI / Anthropic
-│       └── cache.py            # .codemap/cache.json read/write + invalidation
+│       ├── provider.py             # Abstraction: Anthropic / OpenAI
+│       └── cache.py                # .codemap/cache.json read/write + invalidation
+│
 ├── frontend/
-│   ├── index.html
-│   ├── graph.js                # D3.js force-directed graph
-│   ├── panel.js                # Side panel logic
-│   └── style.css
+│   ├── index.html                  # App shell
+│   ├── style.css                   # Design tokens + all component styles
+│   ├── graph.js                    # D3 force simulation + Canvas2D renderer
+│   ├── panel.js                    # Side panel — open/close, expand/collapse
+│   ├── filter.js                   # Filter state (high risk, dead code)
+│   ├── search.js                   # Cmd+K search overlay
+│   └── toast.js                    # Toast notification queue
+│
 ├── tests/
-│   ├── fixtures/               # Sample Python files untuk test
-│   └── test_ast_parser.py
-├── pyproject.toml
+│   ├── fixtures/                   # Sample .py files — defined by Testing Agent
+│   │   ├── simple.py               # Basic function + import
+│   │   ├── circular_a.py           # Circular import pair
+│   │   ├── circular_b.py
+│   │   ├── dynamic_import.py       # importlib.import_module()
+│   │   ├── star_import.py          # from X import *
+│   │   ├── conditional_import.py   # try/except import
+│   │   ├── nested_functions.py     # Inner function patterns
+│   │   ├── decorators.py           # @property, @classmethod, @staticmethod
+│   │   ├── none_return.py          # None return unchecked
+│   │   ├── dead_code.py            # Functions with zero callers
+│   │   ├── type_checking.py        # TYPE_CHECKING pattern
+│   │   └── large_file.py           # >1MB guard test
+│   ├── test_ast_parser.py
+│   ├── test_resolver.py
+│   ├── test_risk_analyzer.py
+│   ├── test_graph_builder.py
+│   └── test_api.py
+│
+├── .github/
+│   └── workflows/
+│       ├── test.yml                # CI — run tests on push/PR
+│       └── publish.yml             # PyPI publish on tag v* (pinned SHA)
+│
+├── BLUEPRINT.md                    # ← ini (source of truth)
+├── SECURITY.md                     # Threat model + vuln reporting (Security Agent)
+├── CONTRIBUTING.md                 # Dev setup + contribution guide
 ├── README.md
-└── .gitignore                  # include .codemap/
+├── pyproject.toml                  # Hatchling build + frontend force-include
+├── LICENSE                         # MIT
+└── .gitignore                      # dist/ *.egg-info/ .codemap/ .venv/
 ```
+
+**Yang di-reject / out of scope:**
+- `minimap.js` — ditolak, bukan MVP
+- React/Vite — tidak ada build step
+- `__pycache__/` — masuk .gitignore
 
 ---
 
 ## 6. CLI Interface
 
 ```bash
-# Basic — scan current directory
+# Basic
 codemap .
-
-# Scan specific directory
 codemap ./src
 
-# Custom port (default: 8765)
+# Options
 codemap ./src --port 8080
-
-# Exclude directories
 codemap ./src --exclude tests/ migrations/ __pycache__/
-
-# Serve tapi tidak auto-open browser
 codemap ./src --no-browser
-
-# Force re-scan (ignore cache)
 codemap ./src --no-cache
-
-# Specify AI provider explicitly
 codemap ./src --ai-provider anthropic
 codemap ./src --ai-provider openai
+codemap --version
 ```
 
-### CLI output di terminal
+### Terminal output
 
 ```
 codemap v0.1.0
@@ -176,11 +213,26 @@ codemap v0.1.0
   Press Ctrl+C to stop
 ```
 
+### Error output di terminal
+
+```
+# Port conflict
+  ✗ Port 8765 already in use. Try: codemap . --port 8766
+
+# No permission
+  ✗ Cannot read directory ./src — permission denied
+
+# No Python files
+  ✗ No .py files found in ./src
+```
+
 ---
 
 ## 7. Data Contract (Graph JSON Schema)
 
-Ini kontrak antara Python scanner dan D3 frontend. **Jangan ubah shape ini tanpa update keduanya.**
+Kontrak antara Python scanner dan D3 frontend. **Jangan ubah shape ini tanpa update keduanya.**
+
+**Security note:** `constants[].value` di-sanitize sebelum masuk JSON — lihat Section 11 (Security).
 
 ```json
 {
@@ -197,7 +249,6 @@ Ini kontrak antara Python scanner dan D3 frontend. **Jangan ubah shape ini tanpa
       "id": "services/user_service.py",
       "type": "file",
       "path": "services/user_service.py",
-      "real_path": "/absolute/path/services/user_service.py",
       "risk_level": "yellow",
       "risk_summary": "2 high, 1 medium",
       "functions": [
@@ -251,7 +302,8 @@ Ini kontrak antara Python scanner dan D3 frontend. **Jangan ubah shape ini tanpa
           "names": ["User", "UserSchema"],
           "resolved_path": "models/user.py",
           "is_dynamic": false,
-          "is_star": false
+          "is_star": false,
+          "is_conditional": false
         }
       ],
       "constants": [
@@ -259,6 +311,11 @@ Ini kontrak antara Python scanner dan D3 frontend. **Jangan ubah shape ini tanpa
           "name": "MAX_RETRY",
           "value": "3",
           "line": 8
+        },
+        {
+          "name": "DB_PASSWORD",
+          "value": "[REDACTED]",
+          "line": 12
         }
       ],
       "has_all_definition": false,
@@ -302,89 +359,132 @@ Ini kontrak antara Python scanner dan D3 frontend. **Jangan ubah shape ini tanpa
 }
 ```
 
+**Removed dari schema:** `real_path` (absolute path) — dihapus per security review M-03. Path yang tersimpan hanya relative terhadap scan root. Absolute path hanya di-compute in-memory saat "open in editor" dipanggil.
+
 ---
 
 ## 8. UX Flow (Frontend)
 
-### Level 0 — Graph Overview (default state)
+### Design System — Anthropic-Adapted Dark
 
-- Semua file = node
-- Benang = import relationship
-- Ketebalan benang = `weight` (berapa banyak nama yang diimport)
-- Warna node:
-  - `#6B7280` abu-abu = clean, no issues
-  - `#F59E0B` kuning = ada warnings medium/low
-  - `#EF4444` merah = ada risk high / dead code / circular import
-- Tidak ada label text di graph — hanya muncul saat hover
-- Zoom + pan enabled (D3 zoom behavior)
+```css
+/* Base colors — warm dark, bukan cold */
+--bg-base:      oklch(10% 0.008 75);
+--bg-surface:   oklch(14% 0.008 75);
+--bg-elevated:  oklch(18% 0.008 75);
+--bg-border:    oklch(24% 0.008 75);
+
+/* Text */
+--ink-primary:   oklch(94% 0.006 75);
+--ink-secondary: oklch(65% 0.008 75);
+--ink-muted:     oklch(42% 0.006 75);
+
+/* Accent */
+--amber:        oklch(76% 0.15 75);   /* risk warn + UI accent */
+--ai-purple:    oklch(68% 0.18 300);  /* AI features only */
+
+/* Risk */
+--risk-clean:   oklch(52% 0.02 250);
+--risk-warn:    oklch(76% 0.15 75);
+--risk-high:    oklch(58% 0.22 25);
+```
+
+Font: **Sora** (UI) + **JetBrains Mono** (code/paths). Canvas renderer pakai `--risk-*` colors sebagai ring/stroke pada node, bukan solid fill.
+
+### Layout
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  TOP BAR 48px — [◇ codemap] [./src] · 12 files 47 fns [filters] │
+├──────────────────────────────────────────────────────────────────┤
+│  ⚠ WARNING BANNER (amber, collapsible, conditional)              │
+├───────────────────────────────────────┬──────────────────────────┤
+│                                       │                          │
+│         GRAPH CANVAS                  │   SIDE PANEL 320px       │
+│         D3 + Canvas2D                 │   slide-in               │
+│         flex: 1                       │   warm dark              │
+│                                       │                          │
+│  [edge legend]         [zoom% reset]  │                          │
+└───────────────────────────────────────┴──────────────────────────┘
+```
+
+### Level 0 — Graph Overview
+
+- Node = file, rendered sebagai circle dengan **ring (stroke)** bukan solid fill
+- Ring color: abu (clean) / amber (warning) / merah (high risk)
+- Ring thickness + node radius scale dengan degree (jumlah connections)
+- High risk node: subtle glow merah
+- Label: hanya muncul saat hover (tooltip card)
+- Zoom + pan: D3 zoom behavior
 
 ### Level 1 — File Panel (klik node)
 
-- Side panel slide in dari kanan — **graph tetap visible, tidak di-replace**
-- Panel width: 320px
+- Side panel slide in dari kanan, 220ms ease
+- Graph **tetap visible** — panel tidak replace canvas
 - Panel content:
-  - Nama file + relative path
-  - Badge: "X functions · Y warnings"
-  - List fungsi dengan dot criticality (merah/kuning/hijau/hitam)
-  - Fungsi collapsed by default
+  - Filename (Sora 700) + relative path (mono)
+  - Badge row: risk counts + function count
+  - Function list (accordion, collapsed by default)
   - Constants section (collapsed)
   - Imports section (collapsed)
 
-### Level 2 — Function Detail (klik fungsi di panel)
+### Level 2 — Function Detail (klik fungsi)
 
-- Expand inline di panel yang sama
-- Content:
-  - Parameters + type annotations
-  - Return type
-  - Line range (klikable → buka file di editor jika bisa)
-  - "Called by" list
-  - "Calls" list
-  - Decorators (kalau ada)
-  - ⚠️ Risk flags — full detail
-  - `[Generate AI Insight]` tombol — disabled kalau no API key
+- Expand inline di panel
+- Parameters + return type
+- Line range
+- Called by list (klikable → pan graph ke node itu)
+- Calls list
+- Decorators
+- Risk flags (cards dengan severity color)
+- `[✦ Generate AI Insight]` — disabled kalau no API key
 
-### Level 3 — AI Insight (klik Generate)
+### Level 3 — AI Insight
 
-- Loading state: spinner + "Analyzing..."
-- Result muncul di bawah tombol, dalam card terpisah
-- Cached — kalau sudah pernah di-generate dan file tidak berubah, langsung show cached result
-- Format structured:
-  ```
-  Role dalam file: [satu kalimat]
-  Kenapa penting: [satu kalimat]
-  Hidden assumption: [kalau ada]
-  ```
+- Loading: spinner + "Analyzing..."
+- Result: structured card (Role / Importance / Hidden assumption)
+- Cached — invalidate kalau file modified
 
-### Graph highlight behavior
+### Graph Interaction
 
-- Hover node → highlight semua edge yang terhubung, dim yang lain
-- Klik node → panel open + node di-pin highlighted
-- Hover fungsi di panel → highlight edge yang relevan di graph
+- Hover node → highlight connected edges, dim semua lain
+- Klik node → panel open, node pinned highlighted
+- Hover fungsi di panel → highlight edge di graph
 - Escape → close panel, reset highlight
+- Cmd+K → search overlay
+- F → fit graph to viewport
+
+### Error States (dari UX Agent — akan diisi)
+
+*Section ini akan diisi oleh UX Agent dengan spec error states lengkap.*
 
 ---
 
 ## 9. Risk Flags Specification
 
-Semua risk flags adalah **pure static analysis — no AI required.**
-
-### Implemented di Phase 2
+Pure static analysis — no AI required.
 
 | Flag Type | Severity | Detection Logic |
 |-----------|----------|----------------|
-| `none_return_unchecked` | high | Fungsi return `X \| None`, caller tidak ada `if result:` atau `is not None` check |
-| `uncaught_exception` | medium | Call ke fungsi yang bisa raise, tidak ada `try/except` di caller maupun callee |
+| `none_return_unchecked` | high | Return `X \| None`, caller tidak check None |
+| `uncaught_exception` | medium | Call ke fungsi yang bisa raise, tidak ada try/except |
 | `dead_code` | medium | Fungsi defined, zero callers di seluruh codebase |
-| `star_import` | medium | `from X import *` — bad practice, exported names unknown |
-| `circular_import_toplevel` | high | A import B di top-level, B import A di top-level |
+| `star_import` | medium | `from X import *` |
+| `circular_import_toplevel` | high | Top-level circular import |
 | `missing_type_annotation` | low | Public function tanpa type hints |
-| `unused_parameter` | low | Parameter di-declare tapi tidak dipakai dalam function body |
+| `unused_parameter` | low | Parameter tidak dipakai dalam body |
 
-### Conservative approach — penting
+### Conservative approach
 
-**Hanya flag yang obvious.** False positive lebih berbahaya dari false negative karena merusak kepercayaan user terhadap tool.
+Hanya flag yang obvious. False positive lebih berbahaya dari false negative.
 
-Contoh: jangan flag `none_return_unchecked` kalau caller menggunakan `assert result is not None` — itu valid check meskipun tidak conventional.
+Jangan flag `none_return_unchecked` kalau caller menggunakan:
+- `if result:`
+- `if result is not None:`
+- `assert result is not None`
+- `result or default_value`
+
+Jangan flag circular import kalau lazy import (import di dalam function body).
 
 ---
 
@@ -394,13 +494,13 @@ Contoh: jangan flag `none_return_unchecked` kalau caller menggunakan `assert res
 
 - **Never** saat initial scan
 - **Only** saat user explicitly klik `[Generate AI Insight]`
-- Cache result — invalidate kalau `file_modified_at` berubah
+- Cache result, invalidate kalau `file_modified_at` berubah
 
 ### Cache structure
 
 ```
 .codemap/
-└── cache.json
+└── cache.json        ← permissions 600, masuk .gitignore
 ```
 
 ```json
@@ -413,214 +513,389 @@ Contoh: jangan flag `none_return_unchecked` kalau caller menggunakan `assert res
       "provider": "anthropic",
       "summary": {
         "role": "Primary data access point untuk user entity",
-        "importance": "8 downstream functions assume return tidak None — kalau behavior ini berubah, semua akan error",
-        "hidden_assumption": "Expects database connection sudah initialized sebelum dipanggil"
+        "importance": "8 downstream functions assume return tidak None",
+        "hidden_assumption": "Expects DB connection sudah initialized"
       }
     }
   }
 }
 ```
 
-### AI prompt structure
+### Secret scrubbing sebelum kirim ke AI
 
+```python
+SENSITIVE_PATTERNS = [
+    r'(?i)(password|passwd|pwd)\s*=\s*["\']?.+',
+    r'(?i)(api_key|apikey|secret|token)\s*=\s*["\']?.+',
+    r'(?i)(auth|credential)\s*=\s*["\']?.+',
+]
+
+def scrub_secrets(source: str) -> str:
+    for pattern in SENSITIVE_PATTERNS:
+        source = re.sub(pattern, lambda m: m.group().split('=')[0] + '= "[REDACTED]"', source)
+    return source
 ```
-System:
-You are a code analyst. Analyze the given Python function in context 
-of its file. Respond ONLY in JSON, no markdown, no explanation outside JSON.
 
-User:
-File: services/user_service.py
-File role: [inferred from filename + imports]
-
-Full file content:
-[entire file content]
-
-Target function: get_user
-- Called by: [list]
-- Calls: [list]  
-- Returns: User | None
-- Risk flags detected: [list]
-
-Respond with JSON:
-{
-  "role": "one sentence — what this function's job is",
-  "importance": "one sentence — why it matters in this codebase",
-  "hidden_assumption": "one sentence — what must be true for this to work, or null"
-}
-```
+**User harus lihat consent notice** pertama kali AI dipanggil: *"File content akan dikirim ke [provider]. Pastikan tidak ada credentials hardcoded."*
 
 ### Provider abstraction
 
 ```python
-# codemap/ai/provider.py
-
 class AIProvider:
     def generate_summary(self, file_content: str, function_context: dict) -> dict:
         raise NotImplementedError
 
 class AnthropicProvider(AIProvider):
-    model = "claude-haiku-4-5-20251001"  # cheapest, cukup untuk summary
-    ...
+    model = "claude-haiku-4-5-20251001"
 
 class OpenAIProvider(AIProvider):
     model = "gpt-4o-mini"
-    ...
 
 def get_provider() -> AIProvider | None:
     if os.getenv("ANTHROPIC_API_KEY"):
         return AnthropicProvider()
     if os.getenv("OPENAI_API_KEY"):
         return OpenAIProvider()
-    return None  # AI disabled, graceful
+    return None
+```
+
+**Jangan store API key sebagai instance attribute.** Baca dari env setiap call. Sanitize exception sebelum log — jangan log error message raw dari provider karena bisa berisi key fragment.
+
+---
+
+## 11. Security Implementation
+
+*Source: Security Review (codemap-security-review.md)*
+
+### Wajib sebelum baris kode pertama
+
+```python
+# app.py — hardcode 127.0.0.1, TIDAK 0.0.0.0
+uvicorn.run(app, host="127.0.0.1", port=port)
+```
+
+### Wajib di Phase 1 saat server dibuat
+
+```python
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        f"http://localhost:{PORT}",
+        f"http://127.0.0.1:{PORT}",
+    ],
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+)
+
+# Origin validation middleware
+@app.middleware("http")
+async def enforce_origin(request: Request, call_next):
+    if request.method in ("POST", "PUT", "DELETE"):
+        origin = request.headers.get("origin", "")
+        allowed = (f"http://localhost:{PORT}", f"http://127.0.0.1:{PORT}")
+        if origin and not any(origin.startswith(a) for a in allowed):
+            return JSONResponse({"error": "Forbidden"}, status_code=403)
+    return await call_next(request)
+
+# DNS rebinding protection
+@app.middleware("http")
+async def validate_host(request: Request, call_next):
+    host = request.headers.get("host", "")
+    if host not in (f"localhost:{PORT}", f"127.0.0.1:{PORT}"):
+        return JSONResponse({"error": "Invalid Host"}, status_code=400)
+    return await call_next(request)
+```
+
+### Sanitize constants sebelum masuk graph JSON
+
+```python
+SENSITIVE_KEYS = {
+    "password", "passwd", "pwd", "secret", "token",
+    "api_key", "apikey", "auth", "credential", "private_key",
+    "access_key", "client_secret",
+}
+
+def sanitize_constant_value(name: str, value: str) -> str:
+    if any(k in name.lower() for k in SENSITIVE_KEYS):
+        return "[REDACTED]"
+    return value
+```
+
+### AST parser safety
+
+```python
+def safe_parse(source: str, filename: str) -> ast.AST | None:
+    if len(source.encode()) > 1_000_000:  # 1MB guard
+        logger.warning(f"Skip {filename}: file too large")
+        return None
+    try:
+        with parse_timeout(5):  # Unix: SIGALRM, Windows: multiprocessing
+            return ast.parse(source, filename=filename)
+    except (TimeoutError, SyntaxError, MemoryError) as e:
+        logger.warning(f"Skip {filename}: {type(e).__name__}")
+        return None
+```
+
+### Cache file permissions
+
+```python
+# Set permissions 600 saat create cache
+cache_path.touch(mode=0o600)
+```
+
+### Symlink depth limit
+
+```python
+MAX_SYMLINK_DEPTH = 5
+
+def resolve_safe(path: Path, depth: int = 0) -> Path | None:
+    if depth > MAX_SYMLINK_DEPTH:
+        return None
+    if path.is_symlink():
+        return resolve_safe(path.resolve(), depth + 1)
+    return path
+```
+
+### Risk matrix summary
+
+| ID | Severity | Finding | Status |
+|----|----------|---------|--------|
+| C-01 | CRITICAL | constants[].value expose credentials | → `sanitize_constant_value()` |
+| C-02 | CRITICAL | Source code ke AI tanpa scrubbing | → `scrub_secrets()` + consent |
+| H-01 | HIGH | Uvicorn bind 0.0.0.0 | → hardcode `127.0.0.1` |
+| H-02 | HIGH | Tidak ada CORS + Origin validation | → middleware Phase 1 |
+| H-03 | HIGH | Cache bisa ter-commit ke Git | → `.gitignore` + `chmod 600` |
+| M-01 | MEDIUM | API key leak via exception | → sanitize exception log |
+| M-02 | MEDIUM | AST DoS via deeply nested code | → `safe_parse()` timeout |
+| M-03 | MEDIUM | `real_path` expose absolute path | → removed dari schema |
+| L-01 | LOW | CI/CD tanpa tag protection | → GitHub Environments + pinned SHA |
+
+---
+
+## 12. Packaging (pyproject.toml)
+
+*Source: Python Packaging Review (python-packaging-reviewer.md)*
+
+```toml
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "codemap"
+version = "0.1.0"
+description = "Interactive visual dependency graph for Python codebases"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+keywords = ["codebase", "visualization", "ast", "dependency-graph", "cli"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+  "typer>=0.12.0",
+  "fastapi>=0.111.0",
+  "uvicorn[standard]>=0.30.0",
+]
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.28.0"]
+openai    = ["openai>=1.30.0"]
+ai        = ["anthropic>=0.28.0", "openai>=1.30.0"]
+dev = [
+  "pytest>=8.0.0",
+  "pytest-asyncio>=0.23.0",
+  "httpx>=0.27.0",
+  "ruff>=0.4.0",
+  "mypy>=1.10.0",
+]
+
+[project.scripts]
+codemap = "codemap.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["codemap"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"frontend" = "codemap/frontend"
+
+[tool.hatch.build.targets.sdist]
+include = ["codemap/", "frontend/", "tests/", "pyproject.toml", "README.md", "LICENSE"]
+```
+
+### Verifikasi wajib setelah build
+
+```bash
+python -m build
+unzip -l dist/codemap-0.1.0-py3-none-any.whl | grep frontend
+# Harus muncul: codemap/frontend/index.html, graph.js, panel.js, style.css, dll
+```
+
+### Frontend path di runtime
+
+```python
+# codemap/server/app.py
+FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
+app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="static")
 ```
 
 ---
 
-## 11. Edge Cases & Known Limitations
+## 13. Testing Strategy
 
-### Parser edge cases — harus di-handle
+*Section ini akan diisi oleh Testing Agent.*
+
+---
+
+## 14. Edge Cases & Known Limitations
+
+### Parser edge cases
 
 | Case | Behavior |
 |------|----------|
-| `importlib.import_module()` dynamic import | Add ke `warnings[]` dengan type `dynamic_import`, edge tidak dibuat |
-| `from X import *` star import | Edge dibuat ke source file, weight unknown (-1), flag sebagai warning |
-| `try: import X except: import Y` conditional import | Buat kedua edge, mark dengan `is_conditional: true` |
-| Relative imports (`from . import X`) | Resolve ke absolute path berdasarkan file location sebelum buat edge |
-| `__all__` definition | Prioritaskan sebagai exported_names, override konvensi underscore |
-| Nested functions | Tampilkan sebagai child di parent function, tidak sebagai top-level node |
-| `@property` decorator | Flag sebagai property, note bahwa caller detection via attribute access (tidak terdeteksi) |
-| Symlinks | Resolve ke real path sebelum assign node ID — cegah duplicate nodes |
-
-### Circular import nuance
-
-```python
-# BAD — flag sebagai circular_import_toplevel
-# a.py: import b
-# b.py: import a
-
-# OK — jangan flag
-# a.py: 
-def get_thing():
-    from b import something  # lazy import, valid pattern
-    return something
-```
+| `importlib.import_module()` | Add ke `warnings[]`, edge tidak dibuat |
+| `from X import *` | Edge dibuat, weight = -1 (unknown), warning |
+| `try: import X except: import Y` | Kedua edge dibuat, `is_conditional: true` |
+| Relative imports | Resolve ke absolute path sebelum buat edge |
+| `__all__` definition | Override exported_names dari konvensi underscore |
+| Nested functions | Child di parent function, tidak top-level |
+| `@property` | Flag sebagai property, caller via attribute access tidak terdeteksi |
+| Symlinks | Resolve real path, max depth 5, cegah duplicate nodes |
+| `exec()` / `eval()` | Warning: dynamic code tidak bisa di-analyse |
+| C extensions (`.so`) | Warning: no Python source, skip |
+| File > 1MB | Skip + warning |
+| Parse timeout > 5s | Skip + warning |
+| File encoding non-UTF-8 | `tokenize.detect_encoding()` sebelum parse |
 
 ### File modified during scan
 
-- Snapshot semua `file_modified_at` di awal scan
-- Post-scan: compare ulang
-- Kalau ada yang berubah → tambahkan ke `warnings[]` dengan type `scan_inconsistency`
-- Jangan fail — tetap render graph, tapi user di-inform
-
-### None check false positive prevention
-
-Jangan flag sebagai `none_return_unchecked` kalau caller menggunakan salah satu dari:
-- `if result:`
-- `if result is not None:`
-- `assert result is not None`
-- `result or default_value`
+- Snapshot `file_modified_at` di awal scan
+- Post-scan compare → kalau berubah, `scan_inconsistency` warning
+- Jangan crash — tetap render, tapi user di-inform
 
 ---
 
-## 12. Phase Breakdown
+## 15. Phase Breakdown
 
-### Phase 1 — Core Visual (Target: 2-3 minggu)
+### Phase 1 — Core Visual (2-3 minggu)
 
 ```
 [ ] CLI entry point (Typer)
-[ ] Python AST scanner — files, functions, imports, exports, constants
+[ ] safe_parse() + encoding detection
+[ ] AST scanner — files, functions, imports, exports, constants
+[ ] sanitize_constant_value() di graph_builder
 [ ] Import resolver — relative → absolute paths
 [ ] Graph JSON builder
-[ ] FastAPI server — serve frontend + GET /api/graph
-[ ] D3.js force-directed graph — nodes + edges
-[ ] Zoom + pan behavior
-[ ] Node color berdasarkan risk_level (placeholder, belum real risk analysis)
-[ ] Hover behavior — highlight connected edges
-[ ] Klik node → side panel
+[ ] FastAPI server — 127.0.0.1 only, CORS + Origin + Host middleware
+[ ] StaticFiles mount via Path(__file__)
+[ ] D3.js Canvas renderer — nodes + edges
+[ ] Zoom + pan (D3 zoom behavior)
+[ ] Node visual: ring/stroke bukan solid fill
+[ ] Hover tooltip (filename, path, risk summary)
+[ ] Hover behavior — highlight connected edges, dim others
+[ ] Klik node → side panel slide in
 [ ] Side panel — function list dengan criticality dot
-[ ] Function expand — callers, callees, params, returns
+[ ] Function expand — callers, callees, params, returns, decorators
+[ ] Filter pills — high risk, dead code
+[ ] Warning banner (collapsible, amber)
+[ ] Loading state + progress bar
+[ ] Empty states (3 variants)
+[ ] Error states (port conflict, no permission, no files)
+[ ] Toast notifications
+[ ] Cmd+K search overlay
 [ ] Auto-open browser
-[ ] pyproject.toml + PyPI ready structure
+[ ] pyproject.toml + frontend force-include
+[ ] Verifikasi wheel isi frontend assets
 ```
 
-### Phase 2 — Risk Analysis (Target: 1-2 minggu)
+### Phase 2 — Risk Analysis (1-2 minggu)
 
 ```
 [ ] none_return_unchecked detection
-[ ] uncaught_exception detection  
+[ ] uncaught_exception detection
 [ ] dead_code detection
 [ ] star_import warning
 [ ] circular_import_toplevel detection
-[ ] missing_type_annotation (low severity)
-[ ] unused_parameter (low severity)
-[ ] Risk flags tampil di panel
+[ ] missing_type_annotation (low)
+[ ] unused_parameter (low)
 [ ] Node color update berdasarkan real risk data
-[ ] warnings[] tampil di UI (collapsible banner)
+[ ] Risk cards di function detail panel
 ```
 
-### Phase 3 — AI Layer (Target: 1 minggu)
+### Phase 3 — AI Layer (1 minggu)
 
 ```
 [ ] Provider abstraction (Anthropic + OpenAI)
-[ ] Cache read/write + invalidation logic
+[ ] scrub_secrets() sebelum kirim ke AI
+[ ] Consent notice pertama kali AI dipanggil
+[ ] Cache read/write + invalidation + chmod 600
+[ ] .gitignore check untuk .codemap/ pada startup
 [ ] POST /api/ai/summary endpoint
-[ ] [Generate AI Insight] button di panel
-[ ] Loading state + error state
+[ ] [Generate AI Insight] button
+[ ] Loading + error states untuk AI
 [ ] Graceful disable kalau no API key
-[ ] README documentation untuk BYOK setup
+[ ] SECURITY.md di repo
+[ ] GitHub Environments + pinned SHA di publish.yml
 ```
 
 ---
 
-## 13. Explicitly Out of Scope (MVP)
-
-Semua ini valid future features — tapi bukan Phase 1, 2, atau 3.
+## 16. Explicitly Out of Scope (MVP)
 
 ```
-✗ Multi-language support (JavaScript, TypeScript, Go, dll)
+✗ Minimap — ditolak
+✗ Multi-language support
 ✗ Runtime / dynamic analysis
-✗ Git history analysis ("fungsi ini sering diubah")
+✗ Git history analysis
 ✗ Test coverage mapping
-✗ requirements.txt / dependency graph (third-party packages)
-✗ Type inference yang complex (butuh full type checker / mypy integration)
+✗ requirements.txt / third-party dependency graph
+✗ Full type inference (mypy integration)
 ✗ VS Code extension
-✗ Real-time file watching (graph auto-update saat file save)
-✗ Collaborative features (share graph ke tim)
-✗ Cloud hosting / SaaS version
+✗ Real-time file watching
+✗ Collaborative / share features
+✗ Cloud hosting / SaaS
 ✗ Export graph sebagai image/SVG
+✗ React / build step apapun
 ```
 
 ---
 
-## 14. Development Notes
-
-### Bootstrap command untuk mulai Phase 1
+## 17. Development Bootstrap
 
 ```bash
-mkdir codemap && cd codemap
+# Setup
+git clone https://github.com/Maouv/CodeMAP.git
+cd CodeMAP
 python -m venv .venv && source .venv/bin/activate
-pip install typer fastapi uvicorn
+pip install -e ".[dev]"
 
-# Buat struktur folder
-mkdir -p codemap/{scanner,server,ai} frontend tests/fixtures
+# Mulai dari sini — test parser dulu sebelum sentuh frontend
+python -m pytest tests/test_ast_parser.py -v
 
-# Test AST parser dengan sample file dulu
-# Sebelum sentuh D3, pastikan JSON output dari scanner sudah benar
+# Build dan verifikasi wheel
+python -m build
+unzip -l dist/codemap-*.whl | grep frontend
 ```
 
-### D3.js timebox warning
+### D3 timebox warning
 
-D3 force-directed graph dengan interactivity penuh bisa jadi rabbit hole. Set timebox:
-- **Hari 1:** Node + edge render + zoom/pan
-- **Hari 2:** Hover highlight + klik behavior
-- **Hari 3:** Node color + label on hover
+- Hari 1: Node + edge Canvas render + zoom/pan
+- Hari 2: Hover highlight + klik behavior
+- Hari 3: Node color + tooltip
 
-Kalau Hari 3 belum selesai dan belum ada progress → scope down D3, fokus ke Python scanner dulu. Visual bisa dipoles belakangan, data harus benar dulu.
-
-### File yang paling kritis di Phase 1
-
-`codemap/scanner/ast_parser.py` — ini jantung dari seluruh tool. Test ini paling dulu dengan berbagai fixture sebelum build apapun di atas.
+Lewat Hari 3 belum progress → scope down D3, fokus ke scanner dulu.
 
 ---
 
-*End of handoff document. Generated: 2026-06-27*
+*BLUEPRINT.md — Living document. Update setiap kali ada keputusan arsitektur baru.*  
+*Last updated: 2026-06-28*
+

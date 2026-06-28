@@ -1403,7 +1403,245 @@ app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="static")
 
 ## 13. Testing Strategy
 
-*Section ini akan diisi oleh Testing Agent.*
+*Source: Testing Agent. Prinsip: test yang berharga untuk solo developer, bukan angka coverage. Lazy = efisien: pakai pytest + httpx yang sudah di-dev deps (Section 12), tidak menambah dependency baru.*
+
+### 13.1 Test Pyramid (Realistis Solo Dev)
+
+| Layer | Ratio | Jumlah Target Phase 1 | Tools |
+|-------|-------|----------------------|-------|
+| **Unit** | ~75% | ~40-50 test | pytest, fixtures `.py` files |
+| **Integration** | ~20% | ~10-15 test | pytest + FastAPI `TestClient` (httpx-based) |
+| **End-to-end** | ~5% | 2-3 smoke test | subprocess `codemap ./tests/fixtures` |
+
+**Kenapa berat di unit:** Core value codemap ada di scanner/parser/sanitize — logic deterministik yang gampang di-test isolated dengan fixture `.py` files kecil. Setiap edge case dari Section 14 = satu unit test, cheap dan fast.
+
+**Kenapa tipis di e2e:** E2E butuh browser automation (Playwright/Selenium) untuk frontend Canvas — overhead besar untuk solo dev, ROI rendah karena D3 rendering bukan business logic yang berubah-ubah. Cukup smoke test "CLI run, server up, `/api/graph` returns valid schema" — sisanya manual saat dev. Frontend JS di-cover lewat manual interaction selama development, bukan automated.
+
+**Yang TIDAK di-test:**
+- Frontend JS (D3 rendering, panel UX) — manual QA, di luar Python coverage.
+- Visual regression — overkill untuk Phase 1.
+- Performance benchmark — baru relevan kalau ada complaint nyata.
+- Real AI provider calls — selalu mock, tidak boleh hit API beneran di CI.
+
+---
+
+### 13.2 Fixture Files Strategy
+
+Setiap fixture adalah `.py` file kecil (~5-30 baris) yang trigger exactly satu parser edge case. Tidak boleh kompleks — kalau fixture butuh penjelasan panjang, fixture-nya yang salah.
+
+#### Fixtures dari Section 5
+
+| File | Edge Case (Section 14) | Isi Minimal |
+|------|-----------------------|-------------|
+| `simple.py` | Happy path baseline | `import os`<br>`def hello(name: str) -> str:`<br>`    return f"hi {name}"` |
+| `circular_a.py` | Top-level circular import | `from circular_b import B`<br>`class A: pass` |
+| `circular_b.py` | Pair untuk circular_a | `from circular_a import A`<br>`class B: pass` |
+| `dynamic_import.py` | `importlib.import_module()` warning | `import importlib`<br>`mod = importlib.import_module("os.path")` |
+| `star_import.py` | `from X import *` warning | `from os import *`<br>`def use(): return getcwd()` |
+| `conditional_import.py` | try/except import | `try:`<br>`    import ujson as json`<br>`except ImportError:`<br>`    import json` |
+| `nested_functions.py` | Inner function tidak top-level | `def outer():`<br>`    def inner(): return 1`<br>`    return inner()` |
+| `decorators.py` | `@property`, `@classmethod`, `@staticmethod` | `class C:`<br>`    @property`<br>`    def p(self): return 1`<br>`    @classmethod`<br>`    def cm(cls): return 2`<br>`    @staticmethod`<br>`    def sm(): return 3` |
+| `none_return.py` | `none_return_unchecked` risk (Phase 2) | `def get_user(uid: int) -> "User | None":`<br>`    return None`<br>`def caller():`<br>`    u = get_user(1)`<br>`    return u.name  # unchecked` |
+| `dead_code.py` | Function tanpa caller | `def orphan(): return 42`<br>`def used(): return orphan()  # used by no one either`<br>`# only used() referenced externally via __all__` |
+| `type_checking.py` | `if TYPE_CHECKING:` pattern | `from typing import TYPE_CHECKING`<br>`if TYPE_CHECKING:`<br>`    from models import User`<br>`def f(u: "User"): pass` |
+| `large_file.py` | >1MB size guard | Generated runtime di test: `"x = 1\n" * 200_000` (~1.4MB), atau commit file generator script. **Jangan commit 1MB file ke Git.** |
+
+#### Fixtures Tambahan (cover sisa Section 14)
+
+| File | Edge Case | Isi |
+|------|-----------|-----|
+| `syntax_error.py` | SyntaxError → skip + warning | `def broken(:\n    pass` (intentional invalid syntax) |
+| `exec_eval.py` | exec/eval warning | `exec("x = 1")`<br>`eval("1 + 1")` |
+| `latin1_encoded.py` | Non-UTF-8 encoding detection | File ditulis bytes dengan `# -*- coding: latin-1 -*-` header + char non-ASCII (`é`). Test pakai `tokenize.detect_encoding()`. |
+| `relative_imports/__init__.py` + `relative_imports/sub.py` + `relative_imports/main.py` | Relative import resolution | `main.py`: `from .sub import helper` — expected resolve ke `relative_imports/sub.py` |
+| `all_definition.py` | `__all__` override | `__all__ = ["public"]`<br>`def public(): pass`<br>`def _private(): pass` |
+| `symlink_target.py` + symlink dibuat di test runtime | Symlink resolve + max depth | Test bikin symlink di tmpdir, bukan commit ke Git. |
+| `secret_constants.py` | `sanitize_constant_value()` coverage | `MAX_RETRY = 3`<br>`DB_PASSWORD = "hunter2"`<br>`API_KEY = "sk-ant-abcdefghij1234567890xyz"`<br>`POSTGRES_URL = "postgres://user:pass@host/db"` |
+
+**Yang TIDAK perlu fixture file:**
+- C extension `.so` — di-test dengan `tmp_path` create empty `foo.so`, assert warning emitted. Tidak perlu real binary.
+- Parse timeout — sulit di-trigger deterministik dengan fixture; pakai monkeypatch pada `parse_timeout` context manager.
+- File modified during scan — pakai `tmp_path` + `os.utime()` runtime, bukan static fixture.
+
+---
+
+### 13.3 Unit Test Spec — `test_ast_parser.py`
+
+Format: `test_<area>__<scenario>`. Setiap test ≤15 baris. Pakai `pytest.fixture` untuk path fixture base.
+
+| Test Name | Input | Assertion |
+|-----------|-------|-----------|
+| `test_parse_simple__extracts_function` | `fixtures/simple.py` | `result.functions` punya 1 entry `name="hello"`, `params=[{name:"name", annotation:"str"}]`, `returns="str"` |
+| `test_parse_simple__extracts_import` | `fixtures/simple.py` | `result.imports` punya 1 entry `from="os"`, `is_star=False` |
+| `test_parse_star_import__flags_is_star` | `fixtures/star_import.py` | `imports[0].is_star == True`, warning emitted |
+| `test_parse_dynamic_import__emits_warning` | `fixtures/dynamic_import.py` | `warnings` mengandung `{type: "dynamic_import"}`, edge tidak dibuat |
+| `test_parse_conditional_import__both_branches` | `fixtures/conditional_import.py` | 2 imports extracted, keduanya `is_conditional=True` |
+| `test_parse_nested_functions__inner_not_toplevel` | `fixtures/nested_functions.py` | Top-level `functions` cuma `["outer"]`, `inner` di-attach sebagai nested |
+| `test_parse_decorators__detects_property` | `fixtures/decorators.py` | Method `p` punya `decorators=["property"]` |
+| `test_parse_type_checking__import_not_runtime` | `fixtures/type_checking.py` | Import `User` di-flag `is_conditional=True` (TYPE_CHECKING block) |
+| `test_parse_all_definition__overrides_exports` | `fixtures/all_definition.py` | `exported_names == ["public"]`, bukan `["public", "_private"]` |
+| `test_parse_syntax_error__returns_none` | `fixtures/syntax_error.py` | `safe_parse()` returns `None`, warning logged |
+| `test_safe_parse__large_file_skipped` | Source string `"x=1\n" * 200_000` | `safe_parse()` returns `None`, log message contains "too large" |
+| `test_safe_parse__size_guard_at_boundary` | Source exactly 1_000_000 bytes | Parsed OK (boundary inclusive); 1_000_001 bytes → skipped |
+| `test_safe_parse__syntax_error_returns_none` | `"def broken(:\n"` | Returns `None`, no exception bubbles up |
+| `test_safe_parse__timeout_returns_none` | Monkeypatch `parse_timeout` to raise `TimeoutError` immediately | Returns `None`, log contains "TimeoutError" |
+| `test_safe_parse__memory_error_returns_none` | Monkeypatch `ast.parse` to raise `MemoryError` | Returns `None`, no crash |
+| `test_parse_latin1_encoded__detects_encoding` | `fixtures/latin1_encoded.py` (bytes) | Parsed OK via `tokenize.detect_encoding()`, no UnicodeDecodeError |
+| `test_parse_exec_eval__emits_warning` | `fixtures/exec_eval.py` | Warning `{type: "dynamic_code"}` emitted untuk exec dan eval |
+
+Test resolver, risk_analyzer, graph_builder, sanitize mengikuti pola yang sama — satu fixture, satu assertion fokus. Sanitize sudah punya doctest di Section 11; tambahkan `test_sanitize_constant_value.py` dengan parametrize untuk SEMUA pattern di `SENSITIVE_VALUE_PATTERNS` dan keyword di `SENSITIVE_NAME_KEYWORDS`.
+
+---
+
+### 13.4 Integration Test Spec — `test_api.py`
+
+Pakai FastAPI `TestClient` (wraps httpx, sudah di dev deps). Setiap test: spin up app, hit endpoint, assert shape. Tidak boleh bind socket beneran.
+
+```python
+# Sketch pola — bukan kode lengkap
+from fastapi.testclient import TestClient
+from codemap.server.app import create_app
+
+def make_client(graph_data):
+    app = create_app(graph_data=graph_data, port=8765)
+    return TestClient(app, base_url="http://localhost:8765")
+```
+
+| Test Name | Skenario | Assertion |
+|-----------|----------|-----------|
+| `test_get_graph__returns_200_with_schema` | GET `/api/graph` dengan pre-scanned fixture data | Status 200; response punya keys `meta`, `nodes`, `edges`, `warnings`; `meta.total_files > 0` |
+| `test_get_graph__nodes_match_section7_schema` | Sama | Setiap node punya `id`, `type`, `path`, `risk_level`, `functions[]`; setiap function punya `name`, `params`, `returns`, `criticality` |
+| `test_get_graph__sanitized_constants` | Fixture dengan `DB_PASSWORD = "hunter2"` | Response constants entry `value == "[REDACTED]"` |
+| `test_security__invalid_host_header_400` | GET `/api/graph` dengan header `Host: evil.com` | Status 400, body `{"error": "Invalid Host"}` |
+| `test_security__valid_host_passes` | Header `Host: localhost:8765` | Status 200 |
+| `test_security__valid_127_host_passes` | Header `Host: 127.0.0.1:8765` | Status 200 |
+| `test_security__post_invalid_origin_403` | POST `/api/ai/summary` dengan `Origin: http://evil.com` | Status 403, body `{"error": "Forbidden"}` |
+| `test_security__post_no_origin_allowed` | POST tanpa Origin header (curl-style) | Bukan 403 (Origin check hanya reject kalau ada DAN invalid — sesuai middleware Section 11) |
+| `test_security__post_valid_origin_passes` | POST dengan `Origin: http://localhost:8765` | Bukan 403 (lolos ke handler) |
+| `test_ai_summary__no_api_key_returns_disabled` | Monkeypatch env: hapus `ANTHROPIC_API_KEY` & `OPENAI_API_KEY`; POST `/api/ai/summary` | Status 200 atau 503 dengan body `{"enabled": false, "reason": "no_api_key"}` — disable graceful |
+| `test_ai_summary__mocked_anthropic_returns_summary` | Set `ANTHROPIC_API_KEY=test`; monkeypatch `AnthropicProvider.generate_summary` return dict valid; POST dengan body `{file, function}` | Status 200, body punya `role`, `importance`, `hidden_assumption` |
+| `test_ai_summary__mocked_provider_401_returns_error` | Mock provider raise `AuthenticationError` | Response body punya `error_type: "auth_failed"`, key fragment TIDAK muncul di error message |
+| `test_ai_summary__mocked_provider_429_returns_rate_limit` | Mock raise `RateLimitError` dengan `retry_after=15` | Response body punya `error_type: "rate_limited"`, `retry_after: 15` |
+| `test_ai_summary__mocked_timeout` | Mock raise `httpx.TimeoutException` | Response `error_type: "timeout"` |
+| `test_ai_summary__caches_result` | Call mock provider sekali, panggil endpoint 2x dengan same `(file, function)` | Provider mock dipanggil 1x saja (cache hit kedua) |
+
+**Mocking AI provider:** pakai `monkeypatch.setattr("codemap.ai.provider.AnthropicProvider.generate_summary", ...)`. Tidak butuh `responses` atau `vcr.py` — provider abstraction sudah testable. Kalau pakai SDK Anthropic/OpenAI langsung tanpa wrapper, baru pertimbangkan `respx` (sudah satu family dengan httpx, lightweight) — tapi hanya kalau perlu.
+
+---
+
+### 13.5 Coverage Threshold (Phase 1)
+
+| Module | Target | Alasan |
+|--------|--------|--------|
+| `codemap/scanner/sanitize.py` | **95%** | Security-critical, semua pattern wajib ada test (lihat C-01) |
+| `codemap/scanner/ast_parser.py` | **85%** | Core logic, edge cases banyak tapi beberapa branch hardware-dependent (timeout SIGALRM vs multiprocessing) |
+| `codemap/scanner/resolver.py` | **85%** | Deterministik, gampang di-cover |
+| `codemap/scanner/graph_builder.py` | **80%** | Mostly assembly logic |
+| `codemap/server/app.py` | **75%** | Middleware ter-cover via integration test; error handlers sulit di-trigger semua |
+| `codemap/ai/*` | **70%** | Provider real path tidak ter-test (mocked); fokus pada error handling + cache |
+| `codemap/cli.py` | **50%** | Mostly Typer glue + print statements; smoke test cukup |
+
+**Overall threshold: 80% lines, 70% branches.**
+
+**Di-exclude dari coverage** (`.coveragerc` / `pyproject.toml [tool.coverage.run]`):
+```toml
+[tool.coverage.run]
+source = ["codemap"]
+omit = [
+  "codemap/__init__.py",          # version string only
+  "codemap/server/app.py:*uvicorn.run*",  # tidak bisa di-test tanpa bind socket
+]
+
+[tool.coverage.report]
+exclude_lines = [
+  "pragma: no cover",
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+  "if __name__ == .__main__.:",
+]
+fail_under = 80
+```
+
+**Frontend (`frontend/*.js`) di luar coverage Python sepenuhnya** — manual test selama development. Kalau di Phase 2+ frontend grow signifikan, pertimbangkan Vitest + jsdom, tapi YAGNI sekarang.
+
+**Bukan 100% karena:** branch error handler tertentu (MemoryError, OSError exotic) hanya bisa di-trigger lewat heroic monkeypatching yang menguji mock framework, bukan logic. ROI rendah.
+
+---
+
+### 13.6 CI Setup — `.github/workflows/test.yml`
+
+```yaml
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Checkout
+        # actions/checkout@v4.1.7
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+
+      - name: Setup Python ${{ matrix.python-version }}
+        # actions/setup-python@v5.1.1
+        uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,ai]"
+
+      - name: Lint (ruff)
+        run: ruff check codemap/ tests/
+
+      - name: Format check (ruff)
+        run: ruff format --check codemap/ tests/
+
+      - name: Type check (mypy)
+        run: mypy codemap/
+
+      - name: Run tests with coverage
+        run: |
+          pip install coverage
+          coverage run -m pytest tests/ -v
+          coverage report --fail-under=80
+          coverage xml
+
+      - name: Upload coverage artifact
+        if: matrix.python-version == '3.12'
+        # actions/upload-artifact@v4.3.6
+        uses: actions/upload-artifact@834a144ee995460fba8ed112a2fc961b36a5ec5a
+        with:
+          name: coverage-report
+          path: coverage.xml
+          retention-days: 14
+```
+
+**Catatan SHA pinning (konsisten dengan L-01):** SHA di atas adalah contoh format — saat implementasi, lookup SHA terbaru dari masing-masing action's release page dan pin. Jangan pakai tag `@v4` karena tag bisa di-overwrite (supply chain risk). Comment di atas SHA = tag yang setara untuk readability.
+
+**Yang sengaja tidak ada di CI:**
+- Codecov upload — tambahin kalau project tumbuh dan butuh PR coverage diff. Artifact upload cukup untuk solo dev.
+- Matrix OS (Windows/macOS) — Phase 1 Linux saja; Windows-specific code path (`parse_timeout` multiprocessing) bisa di-test lokal manual. Tambah `windows-latest` saat ada bug report Windows-specific.
+- Real AI provider integration test — TIDAK pernah. Selalu mock.
+
+---
 
 ---
 

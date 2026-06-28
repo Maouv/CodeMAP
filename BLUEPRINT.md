@@ -1052,6 +1052,39 @@ Browser:
 
 ---
 
+### Frontend State Management
+
+**Pattern: satu shared state object + native `EventTarget`** (`frontend/store.js`, zero dependency, no build step). State terpisah dari bus karena `graph.js` perlu *baca* state sinkron saat render, dan komponen yang mount belakangan (panel setelah klik) butuh current state — bukan replay event.
+
+```js
+// store.js — single source of truth + event bus
+const state = {
+  selectedNodeId: null,
+  hoveredNodeId: null,
+  hoveredEdge: null,       // {from, to} — panel→graph cross-highlight
+  filters: { highRiskOnly: false, deadCode: false },
+  selectedFunction: null,  // {nodeId, fnName}
+  searchOpen: false,
+};
+const bus = new EventTarget();
+function setState(patch, event) {       // mutator tunggal
+  Object.assign(state, patch);
+  bus.dispatchEvent(new CustomEvent(event, { detail: { ...state, patch } }));
+}
+function resetSelection() { /* clear selected/hovered/fn → 'reset' */ }
+window.Store = { state, bus, setState, resetSelection };  // no bundler → global
+```
+
+`index.html`: load `store.js` sebelum graph/panel/filter/search.
+
+**Channels:** `node:select`, `node:hover`, `edge:hover`, `filters`, `pan`, `reset`, `search:open`. Tiap file subscribe via `Store.bus.addEventListener(...)`, dispatch via `Store.setState(patch, channel)`.
+
+**Ditolak:** custom pub/sub class (reinvent EventTarget), `document.dispatchEvent` (collision native event), Proxy reactive (emit tersembunyi → debug susah), Redux/Zustand (dependency + build step, langgar constraint PyPI).
+
+**Skipped:** immutability, middleware, devtools → tambah kalau state >10 keys atau ada race condition async.
+
+---
+
 ## 9. Risk Flags Specification
 
 Pure static analysis — no AI required.
@@ -1782,6 +1815,17 @@ unzip -l dist/codemap-*.whl | grep frontend
 - Hari 3: Node color + tooltip
 
 Lewat Hari 3 belum progress → scope down D3, fokus ke scanner dulu.
+
+---
+
+## 18. Decision Log
+| Keputusan | Alasan | Tanggal |
+|-----------|--------|---------|
+| Vanilla JS, no React | PyPI distribution — no build step | 2026-06-27 |
+| Canvas bukan SVG | >2000 nodes performance | 2026-06-27 |
+| host=127.0.0.1 | Security — no 0.0.0.0 | 2026-06-27 |
+| Minimap ditolak | Scope MVP | 2026-06-28 |
+| Frontend state: shared object + EventTarget | Simple, no deps, no build step | 2026-06-28 |
 
 ---
 

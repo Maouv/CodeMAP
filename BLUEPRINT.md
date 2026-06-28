@@ -610,17 +610,76 @@ async def validate_host(request: Request, call_next):
 
 ### Sanitize constants sebelum masuk graph JSON
 
+File: `codemap/scanner/sanitize.py`
+
 ```python
-SENSITIVE_KEYS = {
-    "password", "passwd", "pwd", "secret", "token",
-    "api_key", "apikey", "auth", "credential", "private_key",
-    "access_key", "client_secret",
+import re
+
+# Name-based: jika nama variabel mengandung keyword ini → redact
+SENSITIVE_NAME_KEYWORDS = {
+    "password", "passwd", "pwd",
+    "secret", "token",
+    "api_key", "apikey", "api_secret",
+    "auth", "credential", "credentials",
+    "private_key", "privkey",
+    "access_key", "access_secret",
+    "client_secret", "client_id",
+    "signing_key", "encryption_key",
+    "webhook_secret", "jwt_secret",
+    "db_pass", "database_pass",
 }
 
+# Value-based: tangkap pola credential umum terlepas dari nama variabel
+SENSITIVE_VALUE_PATTERNS = [
+    re.compile(r"sk-ant-[a-zA-Z0-9\-_]{20,}"),                    # Anthropic API key
+    re.compile(r"sk-[a-zA-Z0-9]{20,}"),                            # OpenAI API key
+    re.compile(r"(?i)(postgres|mysql|mongodb|redis)://[^\s]+@"),   # DB connection string
+    re.compile(r"(?i)bearer\s+[a-zA-Z0-9\-_.]{20,}"),             # Bearer token
+    re.compile(r"(?i)basic\s+[a-zA-Z0-9+/=]{20,}"),               # Basic auth
+    re.compile(r"ghp_[a-zA-Z0-9]{36}"),                            # GitHub PAT
+    re.compile(r"whsec_[a-zA-Z0-9]{32,}"),                         # Stripe webhook secret
+    re.compile(r"xoxb-[0-9]+-[a-zA-Z0-9\-]+"),                    # Slack bot token
+    re.compile(r"-----BEGIN (RSA |EC )?PRIVATE KEY-----"),         # PEM private key
+]
+
+
 def sanitize_constant_value(name: str, value: str) -> str:
-    if any(k in name.lower() for k in SENSITIVE_KEYS):
+    """
+    Returns '[REDACTED]' jika nama atau nilai konstanta terdeteksi sebagai credential.
+    Dipanggil di graph_builder.py sebelum constants[] dipopulate.
+
+    >>> sanitize_constant_value("MAX_RETRY", "3")
+    '3'
+    >>> sanitize_constant_value("DB_PASSWORD", "hunter2")
+    '[REDACTED]'
+    >>> sanitize_constant_value("API_URL", "sk-ant-abc123xyz...")
+    '[REDACTED]'
+    """
+    name_lower = name.lower()
+
+    if any(keyword in name_lower for keyword in SENSITIVE_NAME_KEYWORDS):
         return "[REDACTED]"
+
+    for pattern in SENSITIVE_VALUE_PATTERNS:
+        if pattern.search(value):
+            return "[REDACTED]"
+
     return value
+```
+
+**Known limitation:** Nama variabel tidak konvensional (misal `PROD_DB_PASS_V2`, `key_for_stripe`) mungkin tidak terdeteksi lewat name-based check. Value-based patterns meng-cover kasus ini untuk format credential yang dikenal.
+
+**Dipanggil di:** `graph_builder.py`
+
+```python
+from codemap.scanner.sanitize import sanitize_constant_value
+
+# Saat populate constants[]:
+constants.append({
+    "name": const_name,
+    "value": sanitize_constant_value(const_name, const_value),
+    "line": node.lineno,
+})
 ```
 
 ### AST parser safety
@@ -898,4 +957,3 @@ Lewat Hari 3 belum progress → scope down D3, fokus ke scanner dulu.
 
 *BLUEPRINT.md — Living document. Update setiap kali ada keputusan arsitektur baru.*  
 *Last updated: 2026-06-28*
-

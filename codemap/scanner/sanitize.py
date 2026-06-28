@@ -53,7 +53,7 @@ def sanitize_constant_value(name: str, value: str) -> str:
         '3'
         >>> sanitize_constant_value("DB_PASSWORD", "hunter2")
         '[REDACTED]'
-        >>> sanitize_constant_value("API_URL", "sk-ant-abc123xyz...")
+        >>> sanitize_constant_value("API_URL", "sk-ant-abc123xyz4567890abcdef")
         '[REDACTED]'
         >>> sanitize_constant_value("WEBHOOK_SECRET", "whsec_abc123")
         '[REDACTED]'

@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CodeMAP</title>
+
+  <!-- Fonts: Sora (UI) + JetBrains Mono (code). ui-ux §1.2 -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet"
+    href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" />
+
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- D3 v7 — pakai d3-force, d3-zoom, d3-quadtree dari bundle ini. -->
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+<body>
+
+  <!-- TOP BAR ------------------------------------------------- -->
+  <header class="top-bar" role="banner">
+    <div class="top-bar-logo">◇ codemap</div>
+    <span id="path-chip" class="path-chip">./</span>
+    <span id="topbar-stats" class="top-bar-stats">—</span>
+    <div class="top-bar-spacer"></div>
+    <div class="top-bar-filters">
+      <button class="filter-pill" data-filter="high"
+        role="switch" aria-checked="false"
+        aria-label="Filter: high risk only">⬤ High Risk</button>
+      <button class="filter-pill" data-filter="dead"
+        role="switch" aria-checked="false"
+        aria-label="Filter: dead code only">☠ Dead</button>
+    </div>
+  </header>
+
+  <!-- WARNING BANNER (hidden default, shown by JS) ------------ -->
+  <div id="warning-banner" class="warning-banner collapsed" style="display:none">
+    <div class="warning-row">
+      <span class="warning-icon">⚠</span>
+      <span id="warning-summary" class="warning-summary">—</span>
+      <button id="warning-toggle" class="warning-toggle">Show all</button>
+    </div>
+  </div>
+
+  <!-- MAIN AREA ----------------------------------------------- -->
+  <main class="main-area">
+    <div id="canvas-wrap" class="canvas-wrap">
+      <canvas id="graph-canvas"
+        role="img"
+        aria-label="Dependency graph"
+        tabindex="0"></canvas>
+
+      <!-- Tooltip (positioned by JS) -->
+      <div id="tooltip" class="tooltip" role="status" aria-live="polite"></div>
+
+      <!-- Zoom indicator (bottom-right) -->
+      <div class="zoom-indicator">
+        <span id="zoom-level">100%</span>
+      </div>
+
+      <!-- Empty state (shown by JS when applicable) -->
+      <div id="empty-state" class="empty-state"></div>
+
+      <!-- Loading screen (visible by default sampai graph load) -->
+      <div id="loading-screen" class="loading-screen">
+        <div class="loading-logo">◇ codemap</div>
+        <div class="loading-status">Loading graph…</div>
+        <div class="loading-bar-track"><div class="loading-bar-fill"></div></div>
+      </div>
+    </div>
+
+    <aside id="side-panel" class="side-panel" role="complementary"
+      aria-label="File detail" aria-hidden="true"></aside>
+  </main>
+
+  <!-- SEARCH OVERLAY (Cmd+K) ---------------------------------- -->
+  <div id="search-overlay" class="search-overlay" role="dialog"
+    aria-label="Search files" aria-modal="true">
+    <div class="search-box">
+      <input id="search-input" class="search-input" type="text"
+        placeholder="Search files…  (Cmd+K)" autocomplete="off" />
+      <div id="search-list" class="search-list"></div>
+    </div>
+  </div>
+
+  <!-- TOAST CONTAINER ----------------------------------------- -->
+  <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
+
+  <!-- Scripts: urutan penting. toast → filter (store) → graph/panel/search.
+       Tidak pakai type="module" — no build step, IIFE + window.CodeMAP. -->
+  <script src="toast.js"></script>
+  <script src="filter.js"></script>
+  <script src="graph.js"></script>
+  <script src="panel.js"></script>
+  <script src="search.js"></script>
+</body>
+</html>

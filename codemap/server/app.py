@@ -19,7 +19,7 @@ endpoint sudah lewat ~10.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -162,7 +162,7 @@ def create_app(
             cache_path,
             key,
             {
-                "generated_at": datetime.utcnow().isoformat(),
+                "generated_at": datetime.now(timezone.utc).isoformat(),
                 "file_modified_at": req.modified_at,
                 "provider": provider.name,
                 "summary": summary,
@@ -304,3 +304,4 @@ if __name__ == "__main__":
         for k, v in saved_env.items():
             if v is not None:
                 os.environ[k] = v
+

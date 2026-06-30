@@ -22,6 +22,35 @@ import logging
 import os
 import re
 
+try:
+    from detect_secrets.plugins.aws import AWSKeyDetector
+    from detect_secrets.plugins.github_token import GitHubTokenDetector
+    from detect_secrets.plugins.high_entropy_strings import (
+        Base64HighEntropyString,
+        HexHighEntropyString,
+    )
+    from detect_secrets.plugins.jwt import JwtTokenDetector
+    from detect_secrets.plugins.keyword import KeywordDetector
+    from detect_secrets.plugins.stripe import StripeDetector
+
+    # Layer-1 detector (PHASE3 Task 1). Module-level: instantiate sekali.
+    _DETECTORS = [
+        AWSKeyDetector(),
+        GitHubTokenDetector(),
+        StripeDetector(),
+        JwtTokenDetector(),
+        KeywordDetector(),
+        Base64HighEntropyString(limit=4.5),
+        HexHighEntropyString(limit=3.0),
+    ]
+except ImportError:
+    # ponytail: detect-secrets adalah optional [ai] extra, bukan core dep.
+    # Ceiling: tanpa-nya hanya layer-2 regex jalan (coverage 3 keyword, false
+    # negative tinggi). Upgrade path: ``pip install graps[ai]``. Guard ini
+    # wajib karena server/app.py import modul ini di top-level — tanpa guard,
+    # ``pip install graps`` (core) crash saat import.
+    _DETECTORS = []
+
 logger = logging.getLogger(__name__)
 
 # Pola dari BLUEPRINT §10. Compile sekali di module level.
@@ -33,15 +62,40 @@ _SENSITIVE_PATTERNS = [
 
 
 def scrub_secrets(source: str) -> str:
-    """Redact assignment yang kelihatannya credential sebelum dikirim ke AI.
+    """Redact credential sebelum dikirim ke AI. Dua layer defense-in-depth.
 
-    Menjaga nama variable, mengganti nilai dengan ``"[REDACTED]"``.
+    Layer 1: detect-secrets plugins (AWS key, GitHub/Stripe/JWT token, keyword,
+    high-entropy string) — redact setiap ``secret.secret_value`` per line.
+    Layer 2: regex manual ``_SENSITIVE_PATTERNS`` — fallback untuk pattern yang
+    plugin lewatkan (mis. ``token = "..."`` yang ``secret_value``-nya hanya
+    prefix ``ghp``); juga satu-satunya layer kalau detect-secrets tidak terpasang.
     """
+    redacted_lines = []
+    for line in source.split("\n"):
+        redacted = line
+        for detector in _DETECTORS:
+            try:
+                secrets = detector.analyze_line(
+                    filename="<ai_summary_input>",
+                    line=line,
+                    line_number=0,
+                )
+            except Exception:
+                # ponytail: ceiling = satu detector/line di-skip; never crash redaction.
+                continue
+            for secret in secrets or []:
+                if secret.secret_value:
+                    redacted = redacted.replace(secret.secret_value, "[REDACTED]")
+        redacted_lines.append(redacted)
+
+    scrubbed = "\n".join(redacted_lines)
+
+    # Layer 2 — regex manual lama, tetap jalan sebagai fallback (defense in depth).
     for pattern in _SENSITIVE_PATTERNS:
-        source = pattern.sub(
-            lambda m: m.group().split("=")[0] + '= "[REDACTED]"', source
+        scrubbed = pattern.sub(
+            lambda m: m.group().split("=")[0] + '= "[REDACTED]"', scrubbed
         )
-    return source
+    return scrubbed
 
 
 class AIError(Exception):

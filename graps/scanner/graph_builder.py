@@ -9,7 +9,8 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from .ast_parser import ParseResult
+from graps.scanner import ParsedFile
+
 from .resolver import resolve_import
 from .risk_analyzer import analyze_risks
 from .sanitize import sanitize_constant_value
@@ -49,7 +50,7 @@ def _warning_type(msg: str) -> str:
     return "scan_warning"
 
 
-def _build_node(result: ParseResult, all_results: list[ParseResult], root: Path) -> dict:
+def _build_node(result: ParsedFile, all_results: list[ParsedFile], root: Path) -> dict:
     rel = _rel(result.path, root)
     risks = analyze_risks(result, all_results)
 
@@ -97,7 +98,7 @@ def _build_node(result: ParseResult, all_results: list[ParseResult], root: Path)
     }
 
 
-def _build_edges(results: list[ParseResult], root: Path) -> list[dict]:
+def _build_edges(results: list[ParsedFile], root: Path) -> list[dict]:
     """One edge per (source, resolved target). weight = #import names to target."""
     edges: dict[tuple[str, str], dict] = {}
     for result in results:
@@ -118,7 +119,7 @@ def _build_edges(results: list[ParseResult], root: Path) -> list[dict]:
     return list(edges.values())
 
 
-def build_graph(results: list[ParseResult], root: Path) -> dict:
+def build_graph(results: list[ParsedFile], root: Path) -> dict:
     edges = _build_edges(results, root)
     nodes = [_build_node(r, results, root) for r in results]
 
@@ -141,26 +142,34 @@ def build_graph(results: list[ParseResult], root: Path) -> dict:
 
 
 if __name__ == "__main__":
-    from .ast_parser import safe_parse
+    # ponytail: self-check builds synthetic ParsedFile objects — no parser import —
+    # so graph_builder stays parser-agnostic (BLUEPRINT §4). Fixtures integration
+    # lives in tests/test_graph_builder.py.
+    import tempfile
 
-    fixtures = Path(__file__).resolve().parents[2] / "tests" / "fixtures"
-    results = [safe_parse(p) for p in sorted(fixtures.glob("*.py"))]
-    graph = build_graph(results, fixtures)
+    from graps.scanner import ParsedFile, ParsedFunction, ParsedImport
 
-    assert set(graph) == {"meta", "nodes", "edges", "warnings"}, graph.keys()
-    assert graph["meta"]["total_files"] == len(results)
-    assert "total_files" in graph["meta"]
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        star = ParsedFile(
+            id="star.py", path=root / "star.py",
+            imports=[ParsedImport(target="os", lineno=1, is_star=True)],
+            warnings=["line 1: star import from 'os'"],
+        )
+        svc = ParsedFile(
+            id="svc.py", path=root / "svc.py",
+            functions=[ParsedFunction(name="hello", lineno=2)],
+        )
+        graph = build_graph([star, svc], root)
 
-    # star_import.py → warning (resolver gives star imports no edge, §7).
-    star_warn = any(w["type"] == "star_import" for w in graph["warnings"])
-    star_edge = any(e["weight"] == -1 for e in graph["edges"])
-    assert star_warn or star_edge, "expected star import warning or weight -1 edge"
-
-    # constants sanitize path never crashes on empty input.
-    assert all(n["constants"] == [] for n in graph["nodes"])
-
-    # C-01 wiring proof: a sensitive constant is redacted through the helper.
-    out = _sanitized_constants([{"name": "DB_PASSWORD", "value": "hunter2", "line": 1}])
-    assert out[0]["value"] == "[REDACTED]", out
+        assert set(graph) == {"meta", "nodes", "edges", "warnings"}, graph.keys()
+        assert graph["meta"]["total_files"] == 2
+        # star_import → warning (resolver gives star imports no edge, §7).
+        assert any(w["type"] == "star_import" for w in graph["warnings"]), graph["warnings"]
+        # constants sanitize path never crashes on empty input.
+        assert all(n["constants"] == [] for n in graph["nodes"])
+        # C-01 wiring proof: a sensitive constant is redacted through the helper.
+        out = _sanitized_constants([{"name": "DB_PASSWORD", "value": "hunter2", "line": 1}])
+        assert out[0]["value"] == "[REDACTED]", out
 
     print("self-check ok")

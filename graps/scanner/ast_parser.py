@@ -5,56 +5,36 @@ from __future__ import annotations
 import ast
 import signal
 import tokenize
-from dataclasses import dataclass, field
 from pathlib import Path
+
+from graps.scanner import ParsedFile, ParsedFunction, ParsedImport, ParseResult
 
 _MAX_BYTES = 1_000_000  # 1MB (Section 14)
 _TIMEOUT_S = 5          # Section 14
 
-
-# --- Data carriers (shape finalized by graph_builder.py) ---------------------
-
-@dataclass
-class ParsedFunction:
-    name: str
-    qualified_name: str          # module.Class.method or module.func
-    lineno: int
-    is_nested: bool = False      # Section 14: nested funcs are children, not top-level
-    is_property: bool = False    # Section 14: @property flag
-    decorators: list[str] = field(default_factory=list)
-    parent: str | None = None    # enclosing func/class qualified_name
+# ponytail: re-export data carriers + legacy ParseResult alias so resolver/
+# risk_analyzer keep importing from this module untouched. BLUEPRINT §4 only
+# forbids graph_builder+above from importing the concrete *parser*; data
+# carriers may be re-exported.
+__all__ = [
+    "safe_parse", "ASTParser",
+    "ParsedFile", "ParsedFunction", "ParsedImport", "ParseResult",
+]
 
 
-@dataclass
-class ParsedImport:
-    target: str
-    lineno: int
-    is_conditional: bool = False  # Section 14: try/except import
-    is_star: bool = False         # Section 14: from X import * (weight -1)
-    is_dynamic: bool = False      # Section 14: importlib → warning, no edge
-
-
-@dataclass
-class ParseResult:
-    path: Path
-    functions: list[ParsedFunction] = field(default_factory=list)
-    imports: list[ParsedImport] = field(default_factory=list)
-    exported_names: list[str] = field(default_factory=list)  # __all__ override
-    warnings: list[str] = field(default_factory=list)
-
-
+# Data carriers now live in graps.scanner (BLUEPRINT §4 BaseParser interface).
 # --- Pre-parse guards (Section 14 edge cases) --------------------------------
 
-def safe_parse(path: Path) -> ParseResult:
+def safe_parse(path: Path) -> ParsedFile:
     """Guarded entry point: size/timeout/encoding checks, then run visitor.
 
     Section 14 guards before ast.parse():
       - file > 1MB        → skip + warning
       - parse timeout >5s → skip + warning
       - non-UTF-8         → tokenize.detect_encoding()
-    Returns ParseResult with warnings populated; never raises on bad input.
+    Returns ParsedFile with warnings populated; never raises on bad input.
     """
-    result = ParseResult(path=path)
+    result = ParsedFile(path=path)
 
     try:
         if path.stat().st_size > _MAX_BYTES:
@@ -98,6 +78,28 @@ def safe_parse(path: Path) -> ParseResult:
     parsed.path = path
     parsed.warnings = result.warnings + parsed.warnings
     return parsed
+
+
+class ASTParser:
+    """Python stdlib ``ast`` parser implementing BaseParser (BLUEPRINT §4).
+
+    Adapter over module-level :func:`safe_parse`: keeps the proven guarded parse
+    path while exposing the Protocol shape Phase 4 cli dispatch needs. Always
+    returns a ParsedFile (warnings populated on failure); the ``| None`` in the
+    Protocol is reserved for future parsers that skip unsupported files.
+    """
+
+    def parse_file(self, path: Path, root: Path) -> ParsedFile | None:
+        pf = safe_parse(path)
+        # ponytail: id = path relative to root (BLUEPRINT §4); mirrors graph_builder._rel.
+        try:
+            pf.id = str(path.resolve().relative_to(root.resolve()))
+        except ValueError:
+            pf.id = str(path)
+        return pf
+
+    def supported_extensions(self) -> list[str]:
+        return [".py"]
 
 
 # --- Visitor (stdlib ast.NodeVisitor dispatch) -------------------------------
@@ -207,8 +209,8 @@ class _ScannerVisitor(ast.NodeVisitor):
         for child in node.orelse + node.finalbody:
             self.visit(child)
 
-    def result(self) -> ParseResult:
-        return ParseResult(
+    def result(self) -> ParsedFile:
+        return ParsedFile(
             path=Path(self.module),
             functions=self.functions,
             imports=self.imports,

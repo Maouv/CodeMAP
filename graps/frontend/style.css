@@ -548,6 +548,70 @@ button { font-family: inherit; }
 .btn-ai:disabled { opacity: 0.35; cursor: not-allowed; }
 .btn-ai .icon { font-size: 14px; }
 
+/* AI consent modal (PHASE3 Task 2, BLUEPRINT §10) — in-memory gate, 1 per session. */
+.consent-overlay {
+  position: fixed;
+  inset: 0;
+  background: oklch(0% 0 0 / 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: var(--z-modal);
+}
+.consent-box {
+  width: 420px;
+  max-width: calc(100vw - 40px);
+  padding: var(--space-4);
+  background: var(--bg-elevated);
+  border: 1px solid var(--ai-border);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 24px 80px oklch(0% 0 0 / 0.6);
+}
+.consent-title {
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  font-weight: 700;
+  color: var(--ink-primary);
+}
+.consent-body {
+  margin-top: var(--space-2);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--ink-secondary);
+  line-height: 1.5;
+}
+.consent-actions {
+  margin-top: var(--space-4);
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+.consent-btn {
+  padding: 8px 16px;
+  border-radius: var(--radius-full);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--bg-border);
+  background: transparent;
+  color: var(--ink-secondary);
+  transition: all 150ms ease-out;
+}
+.consent-btn--ok {
+  background: var(--ai-dim);
+  border-color: var(--ai-border);
+  color: var(--ai-purple);
+}
+.consent-btn--ok:hover {
+  background: oklch(68% 0.18 300 / 0.2);
+  border-color: oklch(68% 0.18 300 / 0.5);
+}
+.consent-btn--cancel:hover {
+  background: var(--bg-surface);
+  color: var(--ink-primary);
+}
+
 .ai-card {
   margin-top: var(--space-3);
   padding: var(--space-4);

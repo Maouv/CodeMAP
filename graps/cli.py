@@ -79,6 +79,23 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit(0)
 
 
+def _warn_if_cache_not_ignored(root: Path) -> None:
+    """Warning non-blocking kalau ``.graps/`` tidak di-ignore di ``root/.gitignore``.
+
+    Hanya typer.echo, tidak pernah sys.exit — cache berisi ringkasan AI dari
+    source code, kalau tidak di-ignore bisa ter-commit ke Git (BLUEPRINT H-03).
+    """
+    gitignore = root / ".gitignore"
+    if gitignore.exists():
+        content = gitignore.read_text()
+        if ".graps" not in content and ".graps/" not in content:
+            typer.echo(
+                "  ⚠ .graps/ belum ada di .gitignore — "
+                "cache bisa berisi ringkasan AI dari source code kamu. "
+                "Tambahkan '.graps/' ke .gitignore?"
+            )
+
+
 @app.command()
 def main(
     path: str = typer.Argument(".", help="Direktori yang akan di-scan"),
@@ -110,6 +127,9 @@ def main(
     if not os.access(root, os.R_OK):
         typer.echo(f"  ✗ Cannot read directory {path} — permission denied")
         raise typer.Exit(1)
+
+    # Startup warning: cache .graps/ harus di-gitignore (BLUEPRINT H-03).
+    _warn_if_cache_not_ignored(root)
 
     excl: set[str] = set(_DEFAULT_EXCLUDES)
     if exclude:

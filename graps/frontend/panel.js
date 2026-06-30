@@ -15,6 +15,7 @@
   let panelEl, scrollEl;
   const expandedFns = new Set(); // names yang sedang expand
   const aiResults = new Map();   // key "file::function" → response payload
+  let _aiConsentGiven = false;   // PHASE3 Task 2: in-memory, reset tiap server restart (no localStorage)
 
   function esc(s) {
     return String(s == null ? "" : s)
@@ -272,11 +273,57 @@
     });
   }
 
+    // PHASE3 Task 2 / BLUEPRINT §10: consent gate sebelum AI pertama kali dipanggil.
+  // ponytail: modal dibangun dinamis (pola toast.js), di-remove saat resolve. In-memory
+  // flag 1 per sesi browser; reset otomatis tiap server restart (refresh page saja tidak
+  // reset, tapi itu OK — sesi = lifetime halaman).
+  function showConsentModal() {
+    return new Promise((resolve) => {
+      const overlay = document.createElement("div");
+      overlay.className = "consent-overlay";
+      overlay.setAttribute("role", "dialog");
+      overlay.setAttribute("aria-modal", "true");
+      overlay.setAttribute("aria-label", "Kirim ke AI consent");
+      overlay.innerHTML =
+        '<div class="consent-box">' +
+          '<div class="consent-title">Kirim ke AI?</div>' +
+          '<div class="consent-body">File content akan dikirim ke ' +
+          "Anthropic/OpenAI untuk dianalisis. " +
+          "Pastikan tidak ada credentials hardcoded.</div>" +
+          '<div class="consent-actions">' +
+            '<button class="consent-btn consent-btn--cancel" type="button">Batal</button>' +
+            '<button class="consent-btn consent-btn--ok" type="button">Lanjutkan</button>' +
+          "</div>" +
+        "</div>";
+      document.body.appendChild(overlay);
+
+      function done(ok) {
+        overlay.remove();
+        document.removeEventListener("keydown", onKey);
+        resolve(ok);
+      }
+      function onKey(e) {
+        if (e.key === "Escape") done(false);
+        else if (e.key === "Enter") done(true);
+      }
+      overlay.querySelector(".consent-btn--ok").addEventListener("click", () => done(true));
+      overlay.querySelector(".consent-btn--cancel").addEventListener("click", () => done(false));
+      overlay.addEventListener("click", (e) => { if (e.target === overlay) done(false); });
+      document.addEventListener("keydown", onKey);
+      overlay.querySelector(".consent-btn--ok").focus();
+    });
+  }
+
   async function callAI(fnName) {
     const node = currentNode();
     if (!node) return;
     const fn = (node.functions || []).find((f) => f.name === fnName);
     if (!fn) return;
+    if (!_aiConsentGiven) {
+      const ok = await showConsentModal();
+      if (!ok) return;            // Batal → tombol balik idle (loading state belum di-set)
+      _aiConsentGiven = true;
+    }
     const key = node.path + "::" + fnName;
     aiResults.set(key, { loading: true });
     render();

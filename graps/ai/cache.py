@@ -61,6 +61,10 @@ def write_cache(cache_path: Path, key: str, entry: dict) -> None:
     tmp.write_text(json.dumps(data, indent=2))
     os.chmod(tmp, 0o600)
     tmp.replace(cache_path)
+    # ponytail: replace() swap inode -> mode 0o600 dari tmp sudah bawa di POSIX;
+    # chmod eksplisit di sini menutupi FS yang preserve perm target (cache
+    # pre-existing bawaan OS lain) dan memenuhi kontrak "fix wrong perms on write".
+    os.chmod(cache_path, 0o600)
 
 
 def is_valid(entry: dict, current_modified_at: str) -> bool:

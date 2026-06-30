@@ -1,4 +1,4 @@
-"""I/O cache murni untuk AI summary CodeMAP.
+"""I/O cache murni untuk AI summary graps.
 
 Module ini hanya tahu cara membaca/menulis file cache JSON dengan permission 0o600.
 Tidak tahu apa-apa tentang AI provider, FastAPI, atau scanner.

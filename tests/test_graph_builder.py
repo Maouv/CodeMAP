@@ -8,8 +8,8 @@ Sanitize wiring (C-01) is tested via _sanitized_constants helper directly.
 from datetime import datetime
 from pathlib import Path
 
-from codemap.scanner.ast_parser import safe_parse
-from codemap.scanner.graph_builder import build_graph, _sanitized_constants
+from graps.scanner.ast_parser import safe_parse
+from graps.scanner.graph_builder import build_graph, _sanitized_constants
 
 
 def _make_project(tmp_path):

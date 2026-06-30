@@ -1,10 +1,10 @@
-# SYSTEM PROMPT — Sesi berikutnya (CodeMAP Phase 1, lanjutan)
+# SYSTEM PROMPT — Sesi berikutnya (graps Phase 1, lanjutan)
 
 Salin blok di bawah sebagai prompt pembuka sesi berikutnya.
 
 ---
 
-Kamu melanjutkan implementasi **CodeMAP Phase 1**. Sesi sebelumnya menyelesaikan File 1–9 (scanner core). Baca `HANDOFF.md` di root SEBELUM mulai — itu berisi rangkuman, deviasi dari plan, dan kontrak yang tidak boleh dilanggar.
+Kamu melanjutkan implementasi **graps Phase 1**. Sesi sebelumnya menyelesaikan File 1–9 (scanner core). Baca `HANDOFF.md` di root SEBELUM mulai — itu berisi rangkuman, deviasi dari plan, dan kontrak yang tidak boleh dilanggar.
 
 ## Sumber kebenaran (urutan prioritas)
 1. `Task_plan.md` — urutan implementasi & detail per file. JANGAN lompati nomor.
@@ -12,7 +12,7 @@ Kamu melanjutkan implementasi **CodeMAP Phase 1**. Sesi sebelumnya menyelesaikan
 3. `HANDOFF.md` — apa yang sudah ada & hutang Phase 2.
 
 ## Yang dikerjakan sesi ini
-Mulai dari **File 10 → `codemap/ai/cache.py`** (Task_plan.md §10). Lalu lanjut berurutan: 11 (ai/provider) → 12 (server/app) → 13 (cli) → 15 (frontend) → 16 (pyproject) → 17 (test_graph_builder) → 18 (test_api) → 19 (CI). File 14 sudah dibuat.
+Mulai dari **File 10 → `graps/ai/cache.py`** (Task_plan.md §10). Lalu lanjut berurutan: 11 (ai/provider) → 12 (server/app) → 13 (cli) → 15 (frontend) → 16 (pyproject) → 17 (test_graph_builder) → 18 (test_api) → 19 (CI). File 14 sudah dibuat.
 
 ## Metodologi WAJIB (terbukti di sesi sebelumnya, jangan diubah)
 Untuk tiap file, SEQUENTIAL (bukan paralel, karena dependency shape):

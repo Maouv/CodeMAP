@@ -1,8 +1,8 @@
 from pathlib import Path
 import os
 
-from codemap.scanner.ast_parser import ParsedImport, safe_parse
-from codemap.scanner.resolver import resolve_import, resolve_safe
+from graps.scanner.ast_parser import ParsedImport, safe_parse
+from graps.scanner.resolver import resolve_import, resolve_safe
 
 FIXTURES = Path(__file__).parent / "fixtures" / "relative_imports"
 

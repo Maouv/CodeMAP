@@ -1,6 +1,6 @@
-# CodeMAP — UI/UX Planning & Design Specification (Anthropic Style)
+# graps — UI/UX Planning & Design Specification (Anthropic Style)
 
-> Source: `handoff.md` + `architect-review.md` (repo: Maouv/CodeMAP)  
+> Source: `handoff.md` + `architect-review.md` (repo: Maouv/graps)  
 > Skill: `/ui-ux` + `/impeccable` (brand.md + product.md + typeset.md + colorize.md)  
 > Visual reference: anthropic.com (screenshot 2026-06-28)  
 > Date: 2026-06-28  
@@ -46,9 +46,9 @@
 
 ---
 
-## 0.1. Adaptasi untuk CodeMAP (developer tool)
+## 0.1. Adaptasi untuk graps (developer tool)
 
-CodeMAP adalah **product register** (tool, bukan marketing page). Tapi user request untuk "seperti Anthropic style" — jadi ini adalah **hybrid**:
+graps adalah **product register** (tool, bukan marketing page). Tapi user request untuk "seperti Anthropic style" — jadi ini adalah **hybrid**:
 
 > Ambil estetika visual Anthropic (warm palette, confident type, generous spacing, restraint), terapkan ke developer tool dark mode.
 
@@ -141,7 +141,7 @@ Anthropic menggunakan warm gold/amber sebagai satu-satunya warna accent di atas 
 /* Ratio: 1.125 antar step — product register appropriate */
 ```
 
-**Catatan font**: Anthropic pakai font proprietary. Untuk CodeMAP open source, Sora adalah padanan yang tepat — geometric, confident, tidak masuk reflex-reject list.
+**Catatan font**: Anthropic pakai font proprietary. Untuk graps open source, Sora adalah padanan yang tepat — geometric, confident, tidak masuk reflex-reject list.
 
 ### 1.3 Spacing & Radius
 
@@ -178,7 +178,7 @@ Anthropic menggunakan warm gold/amber sebagai satu-satunya warna accent di atas 
 ## 2. Information Architecture
 
 ```
-CodeMAP UI
+graps UI
 ├── Top Bar (48px — warm dark surface)
 ├── Warning Banner (conditional, collapsible — amber tinted)
 ├── Graph Canvas (D3 force-directed, Canvas renderer)
@@ -200,7 +200,7 @@ CodeMAP UI
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │  TOP BAR — warm dark, 48px                                       │
-│  [codemap]  [./src]  ·  12 files  47 fns  [⬤ High×3] [💀 Dead×2] │
+│  [graps]  [./src]  ·  12 files  47 fns  [⬤ High×3] [💀 Dead×2] │
 ├──────────────────────────────────────────────────────────────────┤
 │  ⚠ BANNER (amber, 36px, collapsible)                             │
 ├───────────────────────────────────────────┬──────────────────────┤
@@ -263,12 +263,12 @@ body {
 **Anthropic reference**: Minimal, logo kiri, hamburger kanan, tidak ramai.
 
 ```
-[◇ codemap]  [./src chip]  ·  12 files  47 fns     [⬤ High Risk ×3] [☠ Dead ×2]
+[◇ graps]  [./src chip]  ·  12 files  47 fns     [⬤ High Risk ×3] [☠ Dead ×2]
 ```
 
 **Visual:**
 - Height: 48px
-- Logo `◇ codemap`: Sora 700, --text-md, --ink-primary. Simbol diamond (◇) sebagai logo mark — simple, tidak butuh SVG icon
+- Logo `◇ graps`: Sora 700, --text-md, --ink-primary. Simbol diamond (◇) sebagai logo mark — simple, tidak butuh SVG icon
 - Path chip: `--font-code`, `--text-xs`, `--bg-elevated`, `--ink-secondary`, radius-sm, padding 4px 8px
 - Stats: `--text-sm`, `--ink-muted`
 - Filter pills: rounded-full, subtle
@@ -1105,10 +1105,10 @@ Functions                                              7
      
   No Python files found
   
-  codemap scanned ./empty-folder
+  graps scanned ./empty-folder
   and found 0 .py files to analyze.
   
-  codemap ./src
+  graps ./src
 ```
 
 **Case 2: Single file (no edges)**

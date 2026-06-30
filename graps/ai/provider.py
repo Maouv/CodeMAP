@@ -1,4 +1,4 @@
-"""Abstraksi AI provider untuk CodeMAP (lihat BLUEPRINT.md §10).
+"""Abstraksi AI provider untuk graps (lihat BLUEPRINT.md §10).
 
 Modul ini hanya bertugas: terima source code + konteks function, scrub secret,
 panggil SDK provider yang sesuai, kembalikan dict ringkas

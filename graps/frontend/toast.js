@@ -1,6 +1,6 @@
-/* CodeMAP — toast notification (paling simple, no dependency).
+/* graps — toast notification (paling simple, no dependency).
  *
- * Public API: window.CodeMAP.toast(msg, type='info')
+ * Public API: window.graps.toast(msg, type='info')
  *   type: 'info' | 'success' | 'error'
  *
  * ponytail: max 3 toast hidup, auto dismiss 3 detik via setTimeout +
@@ -8,7 +8,7 @@
  */
 (function () {
   "use strict";
-  window.CodeMAP = window.CodeMAP || {};
+  window.graps = window.graps || {};
 
   const MAX_ALIVE = 3;
   const TTL_MS = 3000;
@@ -54,5 +54,5 @@
     setTimeout(() => dismiss(el), TTL_MS);
   }
 
-  window.CodeMAP.toast = toast;
+  window.graps.toast = toast;
 })();

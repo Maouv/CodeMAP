@@ -1,4 +1,4 @@
-/* CodeMAP — side panel: render file detail, function accordion, AI insight.
+/* graps — side panel: render file detail, function accordion, AI insight.
  *
  * Listen store.change → kalau selectedNode berubah, render panel content.
  *
@@ -7,10 +7,10 @@
  */
 (function () {
   "use strict";
-  window.CodeMAP = window.CodeMAP || {};
-  const store = window.CodeMAP.store;
-  const setState = window.CodeMAP.setState;
-  const toast = window.CodeMAP.toast;
+  window.graps = window.graps || {};
+  const store = window.graps.store;
+  const setState = window.graps.setState;
+  const toast = window.graps.toast;
 
   let panelEl, scrollEl;
   const expandedFns = new Set(); // names yang sedang expand
@@ -262,7 +262,7 @@
         ev.stopPropagation();
         const target = el.dataset.panTo;
         if (target) {
-          window.dispatchEvent(new CustomEvent("codemap:pan-to", { detail: { id: target } }));
+          window.dispatchEvent(new CustomEvent("graps:pan-to", { detail: { id: target } }));
         }
       });
     });

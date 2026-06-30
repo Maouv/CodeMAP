@@ -1,4 +1,4 @@
-# HANDOFF — CodeMAP Phase 1
+# HANDOFF — graps Phase 1
 
 > Sesi: 2026-06-28. Scope yang dikerjakan: **File 1–9 (scanner core)** dari `Task_plan.md`.
 > Status: **SELESAI & terverifikasi.** 30 test passed (`venv/bin/pytest tests/ -q`).
@@ -7,23 +7,23 @@
 
 ## 1. Rangkuman sesi
 
-Scanner core CodeMAP selesai — pipeline statis dari file `.py` → graph dict JSON.
+Scanner core graps selesai — pipeline statis dari file `.py` → graph dict JSON.
 
 File yang dihasilkan (semua dengan skill `ponytail`):
 
 | # | File | Isi |
 |---|------|-----|
-| 1 | `codemap/scanner/sanitize.py` | `sanitize_constant_value(name, value)` — redaksi kredensial. Doctest pass. |
-| 2 | `codemap/scanner/ast_parser.py` | `safe_parse()` + `_ScannerVisitor` + `_decorator_name()`. Body skeleton diisi. |
+| 1 | `graps/scanner/sanitize.py` | `sanitize_constant_value(name, value)` — redaksi kredensial. Doctest pass. |
+| 2 | `graps/scanner/ast_parser.py` | `safe_parse()` + `_ScannerVisitor` + `_decorator_name()`. Body skeleton diisi. |
 | 3 | `tests/fixtures/*.py` | 16 fixture + folder `relative_imports/`. Tiap file trigger 1 edge case. |
 | 4 | `tests/test_ast_parser.py` | 17 test. |
-| 5 | `codemap/scanner/resolver.py` | `resolve_import()` + `resolve_safe()`. |
-| 6 | `codemap/scanner/risk_analyzer.py` | `analyze_risks()` — Phase 1 hanya `star_import`. |
-| 7 | `codemap/scanner/graph_builder.py` | `build_graph()` — rakit semua jadi dict §7. |
+| 5 | `graps/scanner/resolver.py` | `resolve_import()` + `resolve_safe()`. |
+| 6 | `graps/scanner/risk_analyzer.py` | `analyze_risks()` — Phase 1 hanya `star_import`. |
+| 7 | `graps/scanner/graph_builder.py` | `build_graph()` — rakit semua jadi dict §7. |
 | 8 | `tests/test_resolver.py` | 9 test. |
 | 9 | `tests/test_risk_analyzer.py` | 4 test. |
 
-Tambahan di luar daftar (perlu agar package importable): `codemap/__init__.py` (`__version__ = "0.1.0"`, ini juga File 14 di plan — sudah jadi), `codemap/scanner/__init__.py`, `tests/__init__.py`.
+Tambahan di luar daftar (perlu agar package importable): `graps/__init__.py` (`__version__ = "0.1.0"`, ini juga File 14 di plan — sudah jadi), `graps/scanner/__init__.py`, `tests/__init__.py`.
 
 ---
 
@@ -31,7 +31,7 @@ Tambahan di luar daftar (perlu agar package importable): `codemap/__init__.py` (
 
 Hal-hal yang TIDAK seperti tertulis di `Task_plan.md` / BLUEPRINT. Bukan pelanggaran arsitektur — penyesuaian terhadap kondisi kode nyata. Semua keputusan diverifikasi lewat test.
 
-1. **sanitize.py sudah ada sebelum sesi ini.** Lengkap + doctest, tapi di lokasi salah (`security/sanitize_constant_value.py`). Tindakan: di-`cp` ke `codemap/scanner/sanitize.py`, file lama dihapus. Tidak ditulis ulang oleh subagent.
+1. **sanitize.py sudah ada sebelum sesi ini.** Lengkap + doctest, tapi di lokasi salah (`security/sanitize_constant_value.py`). Tindakan: di-`cp` ke `graps/scanner/sanitize.py`, file lama dihapus. Tidak ditulis ulang oleh subagent.
    - 1 doctest salah (contoh `sk-ant-abc123xyz...` cuma ~9 char, regex butuh `{20,}`) → contoh diperbaiki jadi token panjang. Implementasi TIDAK diubah.
 
 2. **`safe_parse()` SELALU return `ParseResult`, tidak pernah `None`.** Plan menulis `-> ParseResult | None`, tapi skeleton yang sudah di-commit return `ParseResult` (warnings dipopulate). Diikuti skeleton karena lebih konsisten dengan dataclass. **Konsumen hilir (graph_builder, CLI nanti) harus cek `result.warnings`, bukan `is None`.**
@@ -76,7 +76,7 @@ Env: venv di `venv/` (gitignored). pytest sudah terinstall di sana. Jalankan tes
 
 ## 4. Yang harus dilakukan sesi berikut (IKUTI Task_plan.md — JANGAN lompat)
 
-Urutan plan: berikutnya adalah **File 10 → `codemap/ai/cache.py`** (lihat Task_plan.md §10). Lanjutkan nomor demi nomor: 10 → 11 (ai/provider) → 12 (server/app) → 13 (cli) → 15 (frontend) → 16 (pyproject) → 17–19 (test graph_builder, test api, CI). File 14 (`codemap/__init__.py`) SUDAH dibuat sesi ini.
+Urutan plan: berikutnya adalah **File 10 → `graps/ai/cache.py`** (lihat Task_plan.md §10). Lanjutkan nomor demi nomor: 10 → 11 (ai/provider) → 12 (server/app) → 13 (cli) → 15 (frontend) → 16 (pyproject) → 17–19 (test graph_builder, test api, CI). File 14 (`graps/__init__.py`) SUDAH dibuat sesi ini.
 
 Pakai flow Bagian 3 yang sama: subagent sequential + ponytail + parent verifikasi.
 

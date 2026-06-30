@@ -1,8 +1,8 @@
-/* CodeMAP — shared state via EventTarget (Task_plan keputusan final).
+/* graps — shared state via EventTarget (Task_plan keputusan final).
  *
  * Public API:
- *   window.CodeMAP.store           — EventTarget dengan property .state
- *   window.CodeMAP.setState(part)  — Object.assign + dispatch 'change'
+ *   window.graps.store           — EventTarget dengan property .state
+ *   window.graps.setState(part)  — Object.assign + dispatch 'change'
  *
  * Listener: store.addEventListener('change', e => { e.detail.prev, e.detail.next })
  *
@@ -11,7 +11,7 @@
  */
 (function () {
   "use strict";
-  window.CodeMAP = window.CodeMAP || {};
+  window.graps = window.graps || {};
 
   const store = new EventTarget();
   store.state = {
@@ -29,8 +29,8 @@
     }));
   }
 
-  window.CodeMAP.store = store;
-  window.CodeMAP.setState = setState;
+  window.graps.store = store;
+  window.graps.setState = setState;
 
   // Wire filter pills di top-bar setelah DOM ready.
   function wireFilterPills() {

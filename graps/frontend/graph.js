@@ -1,6 +1,6 @@
-/* CodeMAP — Canvas2D graph renderer + D3 force simulation.
+/* graps — Canvas2D graph renderer + D3 force simulation.
  *
- * Public API: window.CodeMAP.graph
+ * Public API: window.graps.graph
  *   .panTo(node)  — center viewport ke node (pakai zoom transform)
  *   .fit()        — fit-to-viewport
  *
@@ -11,10 +11,10 @@
  */
 (function () {
   "use strict";
-  window.CodeMAP = window.CodeMAP || {};
-  const store = window.CodeMAP.store;
-  const setState = window.CodeMAP.setState;
-  const toast = window.CodeMAP.toast;
+  window.graps = window.graps || {};
+  const store = window.graps.store;
+  const setState = window.graps.setState;
+  const toast = window.graps.toast;
 
   let canvas, ctx, wrap;
   let width = 0, height = 0, dpr = 1;
@@ -324,9 +324,9 @@
     (graph.nodes || []).forEach((n) => { totalFns += (n.functions || []).length; });
     if (nNodes === 0) {
       empty.innerHTML = emptyTpl("◇", "No Python files found",
-        "codemap scanned " + escapeHtml(graph.meta && graph.meta.root || ".") +
+        "graps scanned " + escapeHtml(graph.meta && graph.meta.root || ".") +
         " and found 0 .py files to analyze.",
-        "codemap ./src");
+        "graps ./src");
       empty.style.display = "";
       return false;
     }
@@ -453,7 +453,7 @@
     });
 
     // Pan-to event dari panel.js (caller/callee click).
-    window.addEventListener("codemap:pan-to", (ev) => {
+    window.addEventListener("graps:pan-to", (ev) => {
       const node = nodes.find((n) => n.id === ev.detail.id || n.path === ev.detail.id);
       if (node) {
         panTo(node);
@@ -490,7 +490,7 @@
     boot();
   }
 
-  window.CodeMAP.graph = {
+  window.graps.graph = {
     panTo: panTo,
     fit: fitToViewport,
     getNodes: () => nodes,

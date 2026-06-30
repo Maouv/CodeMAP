@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from codemap.scanner.ast_parser import ParsedImport
+from graps.scanner.ast_parser import ParsedImport
 
 MAX_SYMLINK_DEPTH = 5
 

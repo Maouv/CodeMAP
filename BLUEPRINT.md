@@ -1,4 +1,4 @@
-# CodeMAP — Blueprint
+# graps — Blueprint
 
 > Status: Living Document — Source of Truth  
 > Last updated: 2026-06-28  
@@ -8,7 +8,7 @@
 
 ## 1. Project Overview
 
-**codemap** adalah CLI tool open source yang membantu *semi-technical vibe coders* memahami codebase yang ditulis oleh AI agent mereka — melalui interactive visual dependency graph yang di-serve di localhost browser.
+**graps** adalah CLI tool open source yang membantu *semi-technical vibe coders* memahami codebase yang ditulis oleh AI agent mereka — melalui interactive visual dependency graph yang di-serve di localhost browser.
 
 ### Problem yang di-solve
 
@@ -44,8 +44,8 @@ Bukan documentation generator. Bukan AI explainer. Tapi **living map of a codeba
 
 | Item | Detail |
 |------|--------|
-| **Package name** | `codemap` |
-| **Distribution** | PyPI (`pip install codemap`) |
+| **Package name** | `graps` |
+| **Distribution** | PyPI (`pip install graps`) |
 | **License** | MIT |
 | **Language support** | Python only (MVP) |
 | **AI layer** | BYOK — user set env variable sendiri |
@@ -92,7 +92,7 @@ CLI (Python / Typer)
 - **Python AST (built-in):** Zero external dependency untuk core parsing. Deterministic, reliable.
 - **FastAPI:** Lightweight, async, serve static files + API dalam satu process.
 - **D3.js + Canvas2D:** Full control visual. Canvas renderer (bukan SVG) — keputusan final dari architect review untuk support 2000+ nodes.
-- **Vanilla JS (no React, no build step):** Constraint dari distribusi PyPI. `pip install codemap` harus langsung jalan tanpa Node.js dependency.
+- **Vanilla JS (no React, no build step):** Constraint dari distribusi PyPI. `pip install graps` harus langsung jalan tanpa Node.js dependency.
 - **Uvicorn hardcoded ke `host="127.0.0.1"`:** Keputusan security — tidak boleh bind ke 0.0.0.0.
 
 ### AST Parser — Hybrid Approach (dari Architect Review)
@@ -106,13 +106,82 @@ Layer 4: Type annotation resolver →  typing.get_type_hints() + string eval
 
 Setiap layer adalah enhancement — Layer 1 wajib di Phase 1, Layer 2-4 bisa Phase berikutnya.
 
+### BaseParser Interface (wajib dibuat di Phase 3)
+
+Abstraction layer antara scanner dan semua layer di atasnya. Dibuat di Phase 3 sebelum tree-sitter disentuh di Phase 4. Tanpa ini Phase 4 akan menyebabkan domino refactor ke graph_builder, server, dan CLI.
+
+```python
+# graps/scanner/__init__.py
+
+from typing import Protocol, runtime_checkable
+from pathlib import Path
+from dataclasses import dataclass
+
+@dataclass
+class ParsedFunction:
+    name: str
+    params: list[dict]
+    returns: str | None
+    line_start: int
+    line_end: int
+    decorators: list[str]
+    is_private: bool
+    callers: list[str]      # diisi graph_builder, bukan parser
+    callees: list[dict]
+
+@dataclass
+class ParsedFile:
+    id: str                 # relative path dari scan root
+    path: str
+    functions: list[ParsedFunction]
+    imports: list[dict]
+    constants: list[dict]
+    classes: list[dict]
+    exported_names: list[str]
+    file_modified_at: str
+    language: str           # "python", "typescript", "javascript"
+
+@runtime_checkable
+class BaseParser(Protocol):
+    def parse_file(self, path: Path, root: Path) -> ParsedFile | None: ...
+    def supported_extensions(self) -> list[str]: ...
+```
+
+`graph_builder.py` dan semua layer di atas hanya boleh import `ParsedFile` dan `BaseParser` — tidak boleh import `ASTParser` atau `TreeSitterParser` secara langsung. Dispatch dilakukan di `cli.py` berdasarkan file extension.
+
+### Phase 4 — Tree-sitter Migration Plan
+
+```
+Trigger: setelah Phase 3 selesai dan BaseParser interface ada
+
+Yang dilakukan:
+1. pip install tree-sitter + grammar Python, JS, TS
+2. Implement TreeSitterParser(BaseParser) — file baru
+   graps/scanner/tree_sitter_parser.py
+3. ASTParser tetap ada sebagai fallback untuk Python
+4. cli.py: detect extension → dispatch ke parser yang tepat
+5. Test fixtures tambah: .js, .ts files
+6. risk_analyzer.py: generalize ke language-agnostic
+
+Yang TIDAK berubah (terlindungi oleh BaseParser interface):
+- graph_builder.py
+- server/app.py
+- frontend/
+- data contract JSON schema
+- CLI interface
+
+Language support order:
+Phase 4a: Python (tree-sitter) + TypeScript + JavaScript
+Phase 4b: Go, Rust — kalau ada demand
+```
+
 ---
 
 ## 5. File Structure (Final)
 
 ```
-codemap/
-├── codemap/
+graps/
+├── graps/
 │   ├── __init__.py                 # __version__ = "0.1.0"
 │   ├── cli.py                      # Entry point — Typer CLI
 │   ├── scanner/
@@ -127,7 +196,7 @@ codemap/
 │   └── ai/
 │       ├── __init__.py
 │       ├── provider.py             # Abstraction: Anthropic / OpenAI
-│       └── cache.py                # .codemap/cache.json read/write + invalidation
+│       └── cache.py                # .graps/cache.json read/write + invalidation
 │
 ├── frontend/
 │   ├── index.html                  # App shell
@@ -169,7 +238,7 @@ codemap/
 ├── README.md
 ├── pyproject.toml                  # Hatchling build + frontend force-include
 ├── LICENSE                         # MIT
-└── .gitignore                      # dist/ *.egg-info/ .codemap/ .venv/
+└── .gitignore                      # dist/ *.egg-info/ .graps/ .venv/
 ```
 
 **Yang di-reject / out of scope:**
@@ -183,23 +252,23 @@ codemap/
 
 ```bash
 # Basic
-codemap .
-codemap ./src
+graps .
+graps ./src
 
 # Options
-codemap ./src --port 8080
-codemap ./src --exclude tests/ migrations/ __pycache__/
-codemap ./src --no-browser
-codemap ./src --no-cache
-codemap ./src --ai-provider anthropic
-codemap ./src --ai-provider openai
-codemap --version
+graps ./src --port 8080
+graps ./src --exclude tests/ migrations/ __pycache__/
+graps ./src --no-browser
+graps ./src --no-cache
+graps ./src --ai-provider anthropic
+graps ./src --ai-provider openai
+graps --version
 ```
 
 ### Terminal output
 
 ```
-codemap v0.1.0
+graps v0.1.0
 
   Scanning ./src...
   ├── Found 12 files
@@ -217,7 +286,7 @@ codemap v0.1.0
 
 ```
 # Port conflict
-  ✗ Port 8765 already in use. Try: codemap . --port 8766
+  ✗ Port 8765 already in use. Try: graps . --port 8766
 
 # No permission
   ✗ Cannot read directory ./src — permission denied
@@ -395,7 +464,7 @@ Font: **Sora** (UI) + **JetBrains Mono** (code/paths). Canvas renderer pakai `--
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  TOP BAR 48px — [◇ codemap] [./src] · 12 files 47 fns [filters] │
+│  TOP BAR 48px — [◇ graps] [./src] · 12 files 47 fns [filters] │
 ├──────────────────────────────────────────────────────────────────┤
 │  ⚠ WARNING BANNER (amber, collapsible, conditional)              │
 ├───────────────────────────────────────┬──────────────────────────┤
@@ -470,13 +539,13 @@ Trigger: `OSError: [Errno 98] Address already in use`
 
 Terminal output:
 ```
-codemap v0.1.0
+graps v0.1.0
 
   ✗ Port 8765 is already in use.
 
   Try:
-    codemap . --port 8766
-    codemap . --port 8080
+    graps . --port 8766
+    graps . --port 8080
 
   Or find what's using it:
     lsof -i :8765       (macOS / Linux)
@@ -495,7 +564,7 @@ Trigger: `FileNotFoundError` atau path argument tidak resolve.
 
 Terminal output:
 ```
-codemap v0.1.0
+graps v0.1.0
 
   ✗ Directory not found: ./src/nonexistent
 
@@ -512,7 +581,7 @@ Trigger: `PermissionError` saat `os.listdir()` atau `open()` file.
 
 Terminal output:
 ```
-codemap v0.1.0
+graps v0.1.0
 
   ✗ Cannot read directory ./private — permission denied.
 
@@ -530,7 +599,7 @@ Trigger: Scan selesai, `total_files == 0`.
 
 Terminal output:
 ```
-codemap v0.1.0
+graps v0.1.0
 
   Scanning ./node_modules...
   └── No Python files found.
@@ -539,8 +608,8 @@ codemap v0.1.0
     to a directory that contains .py files.
 
   Example:
-    codemap ./src
-    codemap ./app
+    graps ./src
+    graps ./app
 ```
 
 Recovery: Tidak ada — exit tanpa membuka browser. Exit code 0 (bukan error, hanya tidak ada data). Jangan exit code 1 karena bukan crash.
@@ -555,7 +624,7 @@ Trigger: `SyntaxError` di `safe_parse()`. Satu atau beberapa file tidak bisa di-
 
 Terminal output (partial failures):
 ```
-codemap v0.1.0
+graps v0.1.0
 
   Scanning ./src...
   ├── Found 11 files (1 skipped)
@@ -582,7 +651,7 @@ Expanded:
 syntax_error   utils/broken.py:47   Invalid syntax — file excluded from graph
 ```
 
-Recovery: User perlu fix file tersebut, lalu re-run `codemap`. Tidak ada auto-retry.
+Recovery: User perlu fix file tersebut, lalu re-run `graps`. Tidak ada auto-retry.
 
 ---
 
@@ -611,7 +680,7 @@ Ini adalah **unexpected error**. Bedain dari E1.5 yang partial failure by design
 
 Terminal output:
 ```
-codemap v0.1.0
+graps v0.1.0
 
   Scanning ./src...
   ├── Found 7 files
@@ -625,8 +694,8 @@ codemap v0.1.0
   Server running at http://localhost:8765 (partial data)
   Opening browser...
 
-  Please report this at: github.com/Maouv/CodeMAP/issues
-  Include: codemap --version output + error below
+  Please report this at: github.com/Maouv/graps/issues
+  Include: graps --version output + error below
 
   Error: [exception type and message — sanitized, no paths]
 ```
@@ -640,7 +709,7 @@ Expanded:
 ```
 scan_crash   Scanner stopped unexpectedly after processing 7 files.
              Graph may be missing nodes and edges.
-             Re-run codemap to attempt a full scan.
+             Re-run graps to attempt a full scan.
 ```
 
 Graph tetap di-render dengan data yang ada. User tidak di-block.
@@ -689,7 +758,7 @@ AI result area:
 │  Check that your key is valid and active:        │
 │  export ANTHROPIC_API_KEY=sk-ant-...             │
 │                                                  │
-│  Then restart codemap.                           │
+│  Then restart graps.                           │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -789,7 +858,7 @@ AI result area:
 │  Raw response:                                   │
 │  [truncated response text, max 200 chars]        │
 │                                                  │
-│  Please report this at github.com/Maouv/CodeMAP  │
+│  Please report this at github.com/Maouv/graps  │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -818,7 +887,7 @@ performance_warning   Graph with 2,847 nodes may render slowly on some machines.
                       
                       Tips:
                       • Use filters (High Risk / Dead Code) to focus view
-                      • Scan a subdirectory instead: codemap ./src/core
+                      • Scan a subdirectory instead: graps ./src/core
                       • Use Cmd+K to navigate directly to specific files
 ```
 
@@ -828,20 +897,20 @@ Graph tetap di-render. Tidak ada hard limit — ini hanya informasi.
 ```
   ⚠ Large codebase: 2,847 files found.
     Browser rendering may be slow.
-    Consider scanning a subdirectory: codemap ./src/core
+    Consider scanning a subdirectory: graps ./src/core
 ```
 
 ---
 
 **E3.2 — Cache corrupt / unreadable**
 
-Trigger: `.codemap/cache.json` ada tapi tidak bisa di-parse (`json.JSONDecodeError`, `PermissionError`, atau schema version mismatch).
+Trigger: `.graps/cache.json` ada tapi tidak bisa di-parse (`json.JSONDecodeError`, `PermissionError`, atau schema version mismatch).
 
 **Ini bukan fatal** — tool berjalan normal, cache di-reset.
 
 Terminal output (saat startup):
 ```
-  ⚠ Cache at .codemap/cache.json is corrupt — resetting.
+  ⚠ Cache at .graps/cache.json is corrupt — resetting.
     Previous AI insights will need to be regenerated.
 ```
 
@@ -875,17 +944,17 @@ Browser menampilkan full-screen error state (replace loading state):
 ```
 ┌──────────────────────────────────────────────────────────┐
 │                                                          │
-│                      ◇ codemap                           │
+│                      ◇ graps                           │
 │                                                          │
 │               Failed to load graph data                  │
 │                                                          │
 │  The local server returned an error.                     │
 │                                                          │
-│  Try stopping and restarting codemap:                    │
-│  Ctrl+C, then: codemap .                                 │
+│  Try stopping and restarting graps:                    │
+│  Ctrl+C, then: graps .                                 │
 │                                                          │
 │  If this keeps happening, please report at:              │
-│  github.com/Maouv/CodeMAP/issues                         │
+│  github.com/Maouv/graps/issues                         │
 │                                                          │
 │                    [↻ Retry]                             │
 │                                                          │
@@ -906,7 +975,7 @@ Browser:
 ```
 ┌──────────────────────────────────────────────────────────┐
 │                                                          │
-│                      ◇ codemap                           │
+│                      ◇ graps                           │
 │                                                          │
 │              Unexpected graph data format                │
 │                                                          │
@@ -914,9 +983,9 @@ Browser:
 │  This is likely a version mismatch.                      │
 │                                                          │
 │  Make sure you're running the latest version:            │
-│  pip install --upgrade codemap                           │
+│  pip install --upgrade graps                           │
 │                                                          │
-│  Please report at: github.com/Maouv/CodeMAP/issues       │
+│  Please report at: github.com/Maouv/graps/issues       │
 │                                                          │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -1047,8 +1116,8 @@ Browser:
 | E2.7 | Panel | Bad response format | No | Report bug |
 | E3.1 | Browser | >2000 nodes | No (warning) | Filter / subdirectory |
 | E3.2 | Startup | Cache corrupt | No (auto-reset) | None needed |
-| E3.3 | Browser | /api/graph 500 | Yes | Restart codemap |
-| E3.4 | Browser | JSON schema mismatch | Yes | Upgrade codemap |
+| E3.3 | Browser | /api/graph 500 | Yes | Restart graps |
+| E3.4 | Browser | JSON schema mismatch | Yes | Upgrade graps |
 
 ---
 
@@ -1124,7 +1193,7 @@ Jangan flag circular import kalau lazy import (import di dalam function body).
 ### Cache structure
 
 ```
-.codemap/
+.graps/
 └── cache.json        ← permissions 600, masuk .gitignore
 ```
 
@@ -1190,7 +1259,7 @@ def get_provider() -> AIProvider | None:
 
 ## 11. Security Implementation
 
-*Source: Security Review (codemap-security-review.md)*
+*Source: Security Review (graps-security-review.md)*
 
 ### Wajib sebelum baris kode pertama
 
@@ -1235,7 +1304,7 @@ async def validate_host(request: Request, call_next):
 
 ### Sanitize constants sebelum masuk graph JSON
 
-File: `codemap/scanner/sanitize.py`
+File: `graps/scanner/sanitize.py`
 
 ```python
 import re
@@ -1297,7 +1366,7 @@ def sanitize_constant_value(name: str, value: str) -> str:
 **Dipanggil di:** `graph_builder.py`
 
 ```python
-from codemap.scanner.sanitize import sanitize_constant_value
+from graps.scanner.sanitize import sanitize_constant_value
 
 # Saat populate constants[]:
 constants.append({
@@ -1368,7 +1437,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "codemap"
+name = "graps"
 version = "0.1.0"
 description = "Interactive visual dependency graph for Python codebases"
 readme = "README.md"
@@ -1404,30 +1473,30 @@ dev = [
 ]
 
 [project.scripts]
-codemap = "codemap.cli:app"
+graps = "graps.cli:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["codemap"]
+packages = ["graps"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"frontend" = "codemap/frontend"
+"frontend" = "graps/frontend"
 
 [tool.hatch.build.targets.sdist]
-include = ["codemap/", "frontend/", "tests/", "pyproject.toml", "README.md", "LICENSE"]
+include = ["graps/", "frontend/", "tests/", "pyproject.toml", "README.md", "LICENSE"]
 ```
 
 ### Verifikasi wajib setelah build
 
 ```bash
 python -m build
-unzip -l dist/codemap-0.1.0-py3-none-any.whl | grep frontend
-# Harus muncul: codemap/frontend/index.html, graph.js, panel.js, style.css, dll
+unzip -l dist/graps-0.1.0-py3-none-any.whl | grep frontend
+# Harus muncul: graps/frontend/index.html, graph.js, panel.js, style.css, dll
 ```
 
 ### Frontend path di runtime
 
 ```python
-# codemap/server/app.py
+# graps/server/app.py
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="static")
 ```
@@ -1444,9 +1513,9 @@ app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="static")
 |-------|-------|----------------------|-------|
 | **Unit** | ~75% | ~40-50 test | pytest, fixtures `.py` files |
 | **Integration** | ~20% | ~10-15 test | pytest + FastAPI `TestClient` (httpx-based) |
-| **End-to-end** | ~5% | 2-3 smoke test | subprocess `codemap ./tests/fixtures` |
+| **End-to-end** | ~5% | 2-3 smoke test | subprocess `graps ./tests/fixtures` |
 
-**Kenapa berat di unit:** Core value codemap ada di scanner/parser/sanitize — logic deterministik yang gampang di-test isolated dengan fixture `.py` files kecil. Setiap edge case dari Section 14 = satu unit test, cheap dan fast.
+**Kenapa berat di unit:** Core value graps ada di scanner/parser/sanitize — logic deterministik yang gampang di-test isolated dengan fixture `.py` files kecil. Setiap edge case dari Section 14 = satu unit test, cheap dan fast.
 
 **Kenapa tipis di e2e:** E2E butuh browser automation (Playwright/Selenium) untuk frontend Canvas — overhead besar untuk solo dev, ROI rendah karena D3 rendering bukan business logic yang berubah-ubah. Cukup smoke test "CLI run, server up, `/api/graph` returns valid schema" — sisanya manual saat dev. Frontend JS di-cover lewat manual interaction selama development, bukan automated.
 
@@ -1533,7 +1602,7 @@ Pakai FastAPI `TestClient` (wraps httpx, sudah di dev deps). Setiap test: spin u
 ```python
 # Sketch pola — bukan kode lengkap
 from fastapi.testclient import TestClient
-from codemap.server.app import create_app
+from graps.server.app import create_app
 
 def make_client(graph_data):
     app = create_app(graph_data=graph_data, port=8765)
@@ -1558,7 +1627,7 @@ def make_client(graph_data):
 | `test_ai_summary__mocked_timeout` | Mock raise `httpx.TimeoutException` | Response `error_type: "timeout"` |
 | `test_ai_summary__caches_result` | Call mock provider sekali, panggil endpoint 2x dengan same `(file, function)` | Provider mock dipanggil 1x saja (cache hit kedua) |
 
-**Mocking AI provider:** pakai `monkeypatch.setattr("codemap.ai.provider.AnthropicProvider.generate_summary", ...)`. Tidak butuh `responses` atau `vcr.py` — provider abstraction sudah testable. Kalau pakai SDK Anthropic/OpenAI langsung tanpa wrapper, baru pertimbangkan `respx` (sudah satu family dengan httpx, lightweight) — tapi hanya kalau perlu.
+**Mocking AI provider:** pakai `monkeypatch.setattr("graps.ai.provider.AnthropicProvider.generate_summary", ...)`. Tidak butuh `responses` atau `vcr.py` — provider abstraction sudah testable. Kalau pakai SDK Anthropic/OpenAI langsung tanpa wrapper, baru pertimbangkan `respx` (sudah satu family dengan httpx, lightweight) — tapi hanya kalau perlu.
 
 ---
 
@@ -1566,23 +1635,23 @@ def make_client(graph_data):
 
 | Module | Target | Alasan |
 |--------|--------|--------|
-| `codemap/scanner/sanitize.py` | **95%** | Security-critical, semua pattern wajib ada test (lihat C-01) |
-| `codemap/scanner/ast_parser.py` | **85%** | Core logic, edge cases banyak tapi beberapa branch hardware-dependent (timeout SIGALRM vs multiprocessing) |
-| `codemap/scanner/resolver.py` | **85%** | Deterministik, gampang di-cover |
-| `codemap/scanner/graph_builder.py` | **80%** | Mostly assembly logic |
-| `codemap/server/app.py` | **75%** | Middleware ter-cover via integration test; error handlers sulit di-trigger semua |
-| `codemap/ai/*` | **70%** | Provider real path tidak ter-test (mocked); fokus pada error handling + cache |
-| `codemap/cli.py` | **50%** | Mostly Typer glue + print statements; smoke test cukup |
+| `graps/scanner/sanitize.py` | **95%** | Security-critical, semua pattern wajib ada test (lihat C-01) |
+| `graps/scanner/ast_parser.py` | **85%** | Core logic, edge cases banyak tapi beberapa branch hardware-dependent (timeout SIGALRM vs multiprocessing) |
+| `graps/scanner/resolver.py` | **85%** | Deterministik, gampang di-cover |
+| `graps/scanner/graph_builder.py` | **80%** | Mostly assembly logic |
+| `graps/server/app.py` | **75%** | Middleware ter-cover via integration test; error handlers sulit di-trigger semua |
+| `graps/ai/*` | **70%** | Provider real path tidak ter-test (mocked); fokus pada error handling + cache |
+| `graps/cli.py` | **50%** | Mostly Typer glue + print statements; smoke test cukup |
 
 **Overall threshold: 80% lines, 70% branches.**
 
 **Di-exclude dari coverage** (`.coveragerc` / `pyproject.toml [tool.coverage.run]`):
 ```toml
 [tool.coverage.run]
-source = ["codemap"]
+source = ["graps"]
 omit = [
-  "codemap/__init__.py",          # version string only
-  "codemap/server/app.py:*uvicorn.run*",  # tidak bisa di-test tanpa bind socket
+  "graps/__init__.py",          # version string only
+  "graps/server/app.py:*uvicorn.run*",  # tidak bisa di-test tanpa bind socket
 ]
 
 [tool.coverage.report]
@@ -1642,13 +1711,13 @@ jobs:
           pip install -e ".[dev,ai]"
 
       - name: Lint (ruff)
-        run: ruff check codemap/ tests/
+        run: ruff check graps/ tests/
 
       - name: Format check (ruff)
-        run: ruff format --check codemap/ tests/
+        run: ruff format --check graps/ tests/
 
       - name: Type check (mypy)
-        run: mypy codemap/
+        run: mypy graps/
 
       - name: Run tests with coverage
         run: |
@@ -1760,22 +1829,49 @@ jobs:
 [ ] scrub_secrets() sebelum kirim ke AI
 [ ] Consent notice pertama kali AI dipanggil
 [ ] Cache read/write + invalidation + chmod 600
-[ ] .gitignore check untuk .codemap/ pada startup
+[ ] .gitignore check untuk .graps/ pada startup
 [ ] POST /api/ai/summary endpoint
 [ ] [Generate AI Insight] button
 [ ] Loading + error states untuk AI
 [ ] Graceful disable kalau no API key
 [ ] SECURITY.md di repo
 [ ] GitHub Environments + pinned SHA di publish.yml
+[ ] BaseParser Protocol interface di graps/scanner/__init__.py
+[ ] Refactor ASTParser implement BaseParser
+[ ] Refactor graph_builder hanya import ParsedFile, bukan ASTParser
+```
+
+### Phase 4 — Tree-sitter + Multi-language (2-3 minggu)
+
+```
+[ ] pip install tree-sitter + grammar Python, JS, TS di pyproject.toml optional deps
+[ ] graps/scanner/tree_sitter_parser.py implement BaseParser
+[ ] cli.py: extension dispatch → pilih parser yang tepat
+[ ] Test fixtures: .js, .ts, mixed project
+[ ] risk_analyzer.py: generalize ke language-agnostic
+[ ] Update pyproject.toml optional: pip install <nama>[js]
+[ ] Update README: multi-language support
+```
+
+### Phase 5 — OSS Release (1 minggu)
+
+```
+[ ] Rename package — nama final (belum ditentukan)
+[ ] README.md final — install, usage, screenshots
+[ ] CONTRIBUTING.md
+[ ] SECURITY.md final review
+[ ] GitHub Environments setup di UI
+[ ] Tag v0.1.0 → trigger publish.yml → PyPI
+[ ] npm package wrapper (opsional: npx <nama>)
+[ ] uv support verify (pip-compatible, harusnya otomatis)
 ```
 
 ---
 
-## 16. Explicitly Out of Scope (MVP)
+## 16. Explicitly Out of Scope (MVP — sebelum Phase 5)
 
 ```
 ✗ Minimap — ditolak
-✗ Multi-language support
 ✗ Runtime / dynamic analysis
 ✗ Git history analysis
 ✗ Test coverage mapping
@@ -1787,6 +1883,7 @@ jobs:
 ✗ Cloud hosting / SaaS
 ✗ Export graph sebagai image/SVG
 ✗ React / build step apapun
+✗ Go, Rust support — Phase 4b kalau ada demand
 ```
 
 ---
@@ -1795,8 +1892,8 @@ jobs:
 
 ```bash
 # Setup
-git clone https://github.com/Maouv/CodeMAP.git
-cd CodeMAP
+git clone https://github.com/Maouv/graps.git
+cd graps
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
@@ -1805,7 +1902,7 @@ python -m pytest tests/test_ast_parser.py -v
 
 # Build dan verifikasi wheel
 python -m build
-unzip -l dist/codemap-*.whl | grep frontend
+unzip -l dist/graps-*.whl | grep frontend
 ```
 
 ### D3 timebox warning
@@ -1826,8 +1923,11 @@ Lewat Hari 3 belum progress → scope down D3, fokus ke scanner dulu.
 | host=127.0.0.1 | Security — no 0.0.0.0 | 2026-06-27 |
 | Minimap ditolak | Scope MVP | 2026-06-28 |
 | Frontend state: shared object + EventTarget | Simple, no deps, no build step | 2026-06-28 |
+| ast module MVP, tree-sitter Phase 4 | Multi-language prerequisite untuk launch, tapi refactor setelah BaseParser interface ada | 2026-06-28 |
+| BaseParser Protocol interface wajib di Phase 3 | Isolate scanner layer agar Phase 4 tree-sitter migration tidak cascade ke graph_builder/server/frontend | 2026-06-28 |
 
 ---
 
 *BLUEPRINT.md — Living document. Update setiap kali ada keputusan arsitektur baru.*  
 *Last updated: 2026-06-28*
+

@@ -1,4 +1,4 @@
-# Architect Review — CodeMap
+# Architect Review — graps
 
 > Tanggal: 2026-06-27
 > Reviewer: Architect (Hermes)
@@ -8,7 +8,7 @@
 
 ## Ringkasan
 
-CodeMap adalah tool visualisasi codebase berbasis:
+graps adalah tool visualisasi codebase berbasis:
 - **Python AST parsing** — static analysis dependensi
 - **FastAPI** — backend API + static file serving
 - **D3 force-directed graph** — visualisasi dependensi di browser

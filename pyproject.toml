@@ -3,14 +3,14 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "codemap"
+name = "graps"
 version = "0.1.0"
 description = "Interactive visual dependency graph for Python codebases"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
 authors = [
-  { name = "CodeMAP Contributors" }
+  { name = "graps Contributors" }
 ]
 keywords = ["codebase", "visualization", "ast", "dependency-graph", "cli"]
 classifiers = [
@@ -46,23 +46,23 @@ dev = [
 ]
 
 [project.scripts]
-codemap = "codemap.cli:app"
+graps = "graps.cli:app"
 
 # ponytail: isi Homepage/Issues setelah repo publik
 # [project.urls]
 
 [tool.hatch.build.targets.wheel]
-packages = ["codemap"]
+packages = ["graps"]
 
 # ponytail: hatchling only ships .py files by default; force-include needed
-# for non-.py frontend assets (HTML/JS/CSS) inside the codemap package.
+# for non-.py frontend assets (HTML/JS/CSS) inside the graps package.
 [tool.hatch.build.targets.wheel.force-include]
-"codemap/frontend" = "codemap/frontend"
+"graps/frontend" = "graps/frontend"
 
 [tool.hatch.build.targets.sdist]
 include = [
-  "codemap/",
-  "codemap/frontend/",
+  "graps/",
+  "graps/frontend/",
   "tests/",
   "pyproject.toml",
   "README.md",

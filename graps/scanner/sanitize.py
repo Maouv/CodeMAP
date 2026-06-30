@@ -1,5 +1,5 @@
 """
-codemap/scanner/sanitize.py
+graps/scanner/sanitize.py
 Sanitize constant values before they enter the graph JSON.
 Called by graph_builder.py before populating constants[].
 """

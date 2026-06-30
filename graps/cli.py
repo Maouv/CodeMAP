@@ -1,4 +1,4 @@
-"""CLI entry point CodeMAP (lihat BLUEPRINT.md §6).
+"""CLI entry point graps (lihat BLUEPRINT.md §6).
 
 Flow utama: scan .py rekursif → build_graph → create_app → uvicorn + auto-open
 browser. Sengaja flat — satu fungsi `main`, satu helper `_build` agar
@@ -19,16 +19,16 @@ from pathlib import Path
 import typer
 import uvicorn
 
-# ponytail: dipanggil sebagai `python codemap/cli.py` (self-check) butuh repo
-# root di sys.path. No-op untuk `python -m codemap.cli`.
+# ponytail: dipanggil sebagai `python graps/cli.py` (self-check) butuh repo
+# root di sys.path. No-op untuk `python -m graps.cli`.
 if __name__ == "__main__":
     import sys as _sys
     _sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from codemap import __version__  # noqa: E402
-from codemap.scanner.ast_parser import safe_parse
-from codemap.scanner.graph_builder import build_graph
-from codemap.server.app import create_app
+from graps import __version__  # noqa: E402
+from graps.scanner.ast_parser import safe_parse
+from graps.scanner.graph_builder import build_graph
+from graps.server.app import create_app
 
 app = typer.Typer(add_completion=False)
 
@@ -75,7 +75,7 @@ def _port_free(port: int) -> bool:
 
 def _version_callback(value: bool) -> None:
     if value:
-        typer.echo(f"codemap v{__version__}")
+        typer.echo(f"graps v{__version__}")
         raise typer.Exit(0)
 
 
@@ -99,7 +99,7 @@ def main(
     """Scan PATH untuk file Python, jalankan server lokal + buka browser."""
     root = Path(path).resolve()
 
-    typer.echo(f"codemap v{__version__}")
+    typer.echo(f"graps v{__version__}")
     typer.echo("")
     typer.echo(f"  Scanning {root}...")
 
@@ -157,7 +157,7 @@ def main(
     # OS akan bersihkan /tmp eventually.
     cache_path: Path | None
     if no_cache:
-        fd, name = tempfile.mkstemp(suffix=".json", prefix="codemap-nocache-")
+        fd, name = tempfile.mkstemp(suffix=".json", prefix="graps-nocache-")
         os.close(fd)
         cache_path = Path(name)
     else:
@@ -165,7 +165,7 @@ def main(
 
     # Pre-flight port check.
     if not _port_free(port):
-        typer.echo(f"  ✗ Port {port} already in use. Try: codemap . --port {port + 1}")
+        typer.echo(f"  ✗ Port {port} already in use. Try: graps . --port {port + 1}")
         raise typer.Exit(1)
 
     fastapi_app = create_app(graph, port=port, cache_path=cache_path)
@@ -198,11 +198,11 @@ if __name__ == "__main__":
     # 1. Import + Typer instance.
     assert isinstance(app, typer.Typer)
 
-    # 2. --version exit 0 + output mengandung "codemap v".
+    # 2. --version exit 0 + output mengandung "graps v".
     runner = CliRunner()
     r = runner.invoke(app, ["--version"])
     assert r.exit_code == 0, (r.exit_code, r.output)
-    assert "codemap v" in r.output, r.output
+    assert "graps v" in r.output, r.output
 
     # 3. Fixture dir kecil → _build hasilkan graph valid.
     with tempfile.TemporaryDirectory() as td:

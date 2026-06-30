@@ -1,4 +1,4 @@
-"""Integration tests for CodeMAP server API (BLUEPRINT §13.4)."""
+"""Integration tests for graps server API (BLUEPRINT §13.4)."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ import stat
 import pytest
 from fastapi.testclient import TestClient
 
-from codemap.ai.provider import AIError
-from codemap.server.app import create_app
+from graps.ai.provider import AIError
+from graps.server.app import create_app
 
 
 # --- fixtures & helpers -------------------------------------------------------
@@ -169,7 +169,7 @@ def test_ai_summary__mocked_provider_returns_summary(simple_graph, tmp_path, ai_
         def generate_summary(self, src, ctx):
             return {"role": "r", "importance": "i", "hidden_assumption": "h"}
 
-    monkeypatch.setattr("codemap.ai.provider.get_provider", lambda: Fake())
+    monkeypatch.setattr("graps.ai.provider.get_provider", lambda: Fake())
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
     r = _client(simple_graph, tmp_path).post(
         "/api/ai/summary", json=ai_body, headers=_hdr(host=f"127.0.0.1:{PORT}", origin=f"http://127.0.0.1:{PORT}")
@@ -188,7 +188,7 @@ def test_ai_summary__auth_failed_error_type(simple_graph, tmp_path, ai_body, mon
         def generate_summary(self, src, ctx):
             raise AIError("auth_failed")
 
-    monkeypatch.setattr("codemap.ai.provider.get_provider", lambda: Fake())
+    monkeypatch.setattr("graps.ai.provider.get_provider", lambda: Fake())
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
     r = _client(simple_graph, tmp_path).post(
         "/api/ai/summary", json=ai_body, headers=_hdr(host=f"127.0.0.1:{PORT}", origin=f"http://127.0.0.1:{PORT}")
@@ -205,7 +205,7 @@ def test_ai_summary__rate_limited_with_retry_after(simple_graph, tmp_path, ai_bo
         def generate_summary(self, src, ctx):
             raise AIError("rate_limited", retry_after=15)
 
-    monkeypatch.setattr("codemap.ai.provider.get_provider", lambda: Fake())
+    monkeypatch.setattr("graps.ai.provider.get_provider", lambda: Fake())
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
     r = _client(simple_graph, tmp_path).post(
         "/api/ai/summary", json=ai_body, headers=_hdr(host=f"127.0.0.1:{PORT}", origin=f"http://127.0.0.1:{PORT}")
@@ -220,7 +220,7 @@ def test_ai_summary__timeout_error_type(simple_graph, tmp_path, ai_body, monkeyp
         def generate_summary(self, src, ctx):
             raise AIError("timeout")
 
-    monkeypatch.setattr("codemap.ai.provider.get_provider", lambda: Fake())
+    monkeypatch.setattr("graps.ai.provider.get_provider", lambda: Fake())
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
     r = _client(simple_graph, tmp_path).post(
         "/api/ai/summary", json=ai_body, headers=_hdr(host=f"127.0.0.1:{PORT}", origin=f"http://127.0.0.1:{PORT}")
@@ -237,7 +237,7 @@ def test_ai_summary__caches_result(simple_graph, tmp_path, ai_body, monkeypatch)
             nonlocal calls; calls += 1
             return {"role": "r", "importance": "i", "hidden_assumption": "h"}
 
-    monkeypatch.setattr("codemap.ai.provider.get_provider", lambda: Fake())
+    monkeypatch.setattr("graps.ai.provider.get_provider", lambda: Fake())
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
     c = _client(simple_graph, tmp_path)
     hdrs = _hdr(host=f"127.0.0.1:{PORT}", origin=f"http://127.0.0.1:{PORT}")
@@ -259,7 +259,7 @@ def test_ai_summary__cache_invalidation_on_modified_at_change(simple_graph, tmp_
             nonlocal calls; calls += 1
             return {"role": "r", "importance": "i", "hidden_assumption": "h"}
 
-    monkeypatch.setattr("codemap.ai.provider.get_provider", lambda: Fake())
+    monkeypatch.setattr("graps.ai.provider.get_provider", lambda: Fake())
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
     c = _client(simple_graph, tmp_path)
     hdrs = _hdr(host=f"127.0.0.1:{PORT}", origin=f"http://127.0.0.1:{PORT}")

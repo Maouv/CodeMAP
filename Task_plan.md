@@ -1,4 +1,4 @@
-# TASK_PLAN.md — CodeMAP Phase 1 Implementation Plan
+# TASK_PLAN.md — graps Phase 1 Implementation Plan
 
 > Generated from: BLUEPRINT.md (Section 4, 5, 7, 11, 12, 13, 14, 15)
 > Source of truth: BLUEPRINT.md — jangan buat keputusan arsitektur baru tanpa update BLUEPRINT.
@@ -9,22 +9,22 @@
 ## URUTAN IMPLEMENTASI (Dependency Order)
 
 ```
-1.  codemap/scanner/sanitize.py          ← no deps, security-critical
-2.  codemap/scanner/ast_parser.py        ← no deps, core parser
+1.  graps/scanner/sanitize.py          ← no deps, security-critical
+2.  graps/scanner/ast_parser.py        ← no deps, core parser
 3.  tests/fixtures/ (all .py files)      ← butuh ast_parser shape final
 4.  tests/test_ast_parser.py             ← butuh fixtures + ast_parser
-5.  codemap/scanner/resolver.py          ← butuh ast_parser.ParsedImport
-6.  codemap/scanner/risk_analyzer.py     ← butuh ast_parser.ParseResult
-7.  codemap/scanner/graph_builder.py     ← butuh ast_parser + resolver + sanitize + risk_analyzer
+5.  graps/scanner/resolver.py          ← butuh ast_parser.ParsedImport
+6.  graps/scanner/risk_analyzer.py     ← butuh ast_parser.ParseResult
+7.  graps/scanner/graph_builder.py     ← butuh ast_parser + resolver + sanitize + risk_analyzer
 8.  tests/test_resolver.py               ← butuh resolver + fixtures
 9.  tests/test_risk_analyzer.py          ← butuh risk_analyzer + fixtures
-10. codemap/ai/cache.py                  ← no deps on scanner
-11. codemap/ai/provider.py               ← butuh cache.py
-12. codemap/server/app.py                ← butuh graph_builder + ai/provider
-13. codemap/cli.py                       ← butuh server/app + scanner pipeline
-14. codemap/__init__.py                  ← standalone, version string only
+10. graps/ai/cache.py                  ← no deps on scanner
+11. graps/ai/provider.py               ← butuh cache.py
+12. graps/server/app.py                ← butuh graph_builder + ai/provider
+13. graps/cli.py                       ← butuh server/app + scanner pipeline
+14. graps/__init__.py                  ← standalone, version string only
 15. frontend/ (index.html → style.css → graph.js → panel.js → filter.js → search.js → toast.js)
-16. pyproject.toml                       ← butuh frontend final + semua codemap/ modules
+16. pyproject.toml                       ← butuh frontend final + semua graps/ modules
 17. tests/test_graph_builder.py          ← butuh graph_builder + fixtures
 18. tests/test_api.py                    ← butuh server/app + ai/provider (mockable)
 19. .github/workflows/test.yml           ← butuh semua test + pyproject.toml
@@ -36,7 +36,7 @@
 
 ---
 
-### 1. `codemap/scanner/sanitize.py`
+### 1. `graps/scanner/sanitize.py`
 
 **BLUEPRINT section:** §11 (Security — sanitize_constant_value), §7 (Data Contract — constants[].value)
 
@@ -64,7 +64,7 @@
 
 ---
 
-### 2. `codemap/scanner/ast_parser.py`
+### 2. `graps/scanner/ast_parser.py`
 
 **BLUEPRINT section:** §4 (Architecture — AST Parser Hybrid), §5 (File Structure), §11 (AST parser safety — safe_parse), §14 (Edge Cases — tabel Parser edge cases)
 
@@ -146,7 +146,7 @@ Tidak perlu dibuat sebagai file:
 **BLUEPRINT section:** §13.3 (Unit Test Spec — tabel 17 test cases), §13.1
 
 **Input yang dibutuhkan:**
-- `codemap.scanner.ast_parser`
+- `graps.scanner.ast_parser`
 - `tests/fixtures/` (semua .py files)
 - Stdlib: `pytest`, `pathlib`
 
@@ -165,12 +165,12 @@ Tidak perlu dibuat sebagai file:
 
 ---
 
-### 5. `codemap/scanner/resolver.py`
+### 5. `graps/scanner/resolver.py`
 
 **BLUEPRINT section:** §4, §5, §7 (imports[].resolved_path), §11 (Symlink depth limit), §14 (Relative imports, Symlinks)
 
 **Input yang dibutuhkan:**
-- `codemap.scanner.ast_parser.ParsedImport`
+- `graps.scanner.ast_parser.ParsedImport`
 - Stdlib: `pathlib`, `sys`
 
 **Output yang dihasilkan:**
@@ -189,12 +189,12 @@ Tidak perlu dibuat sebagai file:
 
 ---
 
-### 6. `codemap/scanner/risk_analyzer.py`
+### 6. `graps/scanner/risk_analyzer.py`
 
 **BLUEPRINT section:** §9 (Risk Flags — tabel + Conservative approach)
 
 **Input yang dibutuhkan:**
-- `codemap.scanner.ast_parser.ParseResult`
+- `graps.scanner.ast_parser.ParseResult`
 - `list[ParseResult]` untuk cross-file analysis (dead_code, circular)
 
 **Output yang dihasilkan:**
@@ -216,15 +216,15 @@ Tidak perlu dibuat sebagai file:
 
 ---
 
-### 7. `codemap/scanner/graph_builder.py`
+### 7. `graps/scanner/graph_builder.py`
 
 **BLUEPRINT section:** §7 (Data Contract — full schema), §4, §11 (sanitize call pattern)
 
 **Input yang dibutuhkan:**
-- `codemap.scanner.ast_parser.ParseResult` (list)
-- `codemap.scanner.resolver` (resolve_import)
-- `codemap.scanner.risk_analyzer` (analyze_risks)
-- `codemap.scanner.sanitize.sanitize_constant_value`
+- `graps.scanner.ast_parser.ParseResult` (list)
+- `graps.scanner.resolver` (resolve_import)
+- `graps.scanner.risk_analyzer` (analyze_risks)
+- `graps.scanner.sanitize.sanitize_constant_value`
 - Stdlib: `datetime`, `pathlib`, `json`
 
 **Output yang dihasilkan:**
@@ -250,7 +250,7 @@ Tidak perlu dibuat sebagai file:
 **BLUEPRINT section:** §13.1, §14 (Relative imports, Symlinks)
 
 **Input yang dibutuhkan:**
-- `codemap.scanner.resolver`
+- `graps.scanner.resolver`
 - `tests/fixtures/relative_imports/`
 - Stdlib: `pytest`, `tmp_path`
 
@@ -266,8 +266,8 @@ Tidak perlu dibuat sebagai file:
 **BLUEPRINT section:** §9, §13.1
 
 **Input yang dibutuhkan:**
-- `codemap.scanner.risk_analyzer`
-- `codemap.scanner.ast_parser.safe_parse`
+- `graps.scanner.risk_analyzer`
+- `graps.scanner.ast_parser.safe_parse`
 - Fixtures: `none_return.py`, `dead_code.py`, `star_import.py`, `circular_a.py`, `circular_b.py`
 
 **Output:** Test suite risk_analyzer
@@ -277,7 +277,7 @@ Tidak perlu dibuat sebagai file:
 
 ---
 
-### 10. `codemap/ai/cache.py`
+### 10. `graps/ai/cache.py`
 
 **BLUEPRINT section:** §10 (Cache structure, Cache file permissions)
 
@@ -300,12 +300,12 @@ Tidak perlu dibuat sebagai file:
 
 ---
 
-### 11. `codemap/ai/provider.py`
+### 11. `graps/ai/provider.py`
 
 **BLUEPRINT section:** §10 (Provider abstraction, Secret scrubbing, When AI is called)
 
 **Input yang dibutuhkan:**
-- `codemap.ai.cache`
+- `graps.ai.cache`
 - Optional: `anthropic` SDK, `openai` SDK
 - Stdlib: `os`, `re`, `logging`
 
@@ -329,14 +329,14 @@ Tidak perlu dibuat sebagai file:
 
 ---
 
-### 12. `codemap/server/app.py`
+### 12. `graps/server/app.py`
 
 **BLUEPRINT section:** §4 (FastAPI + StaticFiles), §11 (CORS, Origin validation, DNS rebinding, host=127.0.0.1), §12 (Frontend path runtime), §10 (POST /api/ai/summary)
 
 **Input yang dibutuhkan:**
-- `codemap.scanner.graph_builder.build_graph`
-- `codemap.ai.provider.get_provider`, `AIProvider`
-- `codemap.ai.cache`
+- `graps.scanner.graph_builder.build_graph`
+- `graps.ai.provider.get_provider`, `AIProvider`
+- `graps.ai.cache`
 - Runtime: `fastapi`, `uvicorn`
 
 **Output yang dihasilkan:**
@@ -365,21 +365,21 @@ Tidak perlu dibuat sebagai file:
 
 ---
 
-### 13. `codemap/cli.py`
+### 13. `graps/cli.py`
 
 **BLUEPRINT section:** §6 (CLI Interface), §4, §15 (Phase 1 — auto-open browser)
 
 **Input yang dibutuhkan:**
-- `codemap.scanner.ast_parser.safe_parse`
-- `codemap.scanner.resolver`
-- `codemap.scanner.graph_builder.build_graph`
-- `codemap.server.app.create_app`
+- `graps.scanner.ast_parser.safe_parse`
+- `graps.scanner.resolver`
+- `graps.scanner.graph_builder.build_graph`
+- `graps.server.app.create_app`
 - Runtime: `typer`
 - Stdlib: `pathlib`, `webbrowser`
 
 **Output yang dihasilkan:**
 - `app = typer.Typer()`
-- Command: `codemap [PATH] [--port PORT] [--no-browser]`
+- Command: `graps [PATH] [--port PORT] [--no-browser]`
 - Flow: scan → build_graph → create_app → uvicorn + auto-open browser
 
 **Penting:**
@@ -395,7 +395,7 @@ Tidak perlu dibuat sebagai file:
 
 ---
 
-### 14. `codemap/__init__.py`
+### 14. `graps/__init__.py`
 
 **BLUEPRINT section:** §5
 
@@ -440,14 +440,14 @@ index.html  →  style.css  →  toast.js  →  filter.js  →  graph.js  →  p
 **Output:** Copy exact dari §12
 
 **Kritis:**
-- `[tool.hatch.build.targets.wheel.force-include]` `"frontend" = "codemap/frontend"` — ini yang bundling frontend ke wheel
+- `[tool.hatch.build.targets.wheel.force-include]` `"frontend" = "graps/frontend"` — ini yang bundling frontend ke wheel
 - Optional deps: anthropic, openai, ai, dev sesuai §12
-- Entry point: `codemap = "codemap.cli:app"`
+- Entry point: `graps = "graps.cli:app"`
 
 **Verifikasi wajib:**
 ```bash
 python -m build
-unzip -l dist/codemap-*.whl | grep frontend
+unzip -l dist/graps-*.whl | grep frontend
 ```
 
 **Context boundary:** Tidak perlu tahu implementation detail apapun.
@@ -459,8 +459,8 @@ unzip -l dist/codemap-*.whl | grep frontend
 **BLUEPRINT section:** §7 (schema assertions), §13.4 (pattern referensi)
 
 **Input yang dibutuhkan:**
-- `codemap.scanner.graph_builder.build_graph`
-- `codemap.scanner.ast_parser.safe_parse`
+- `graps.scanner.graph_builder.build_graph`
+- `graps.scanner.ast_parser.safe_parse`
 - Fixtures: `secret_constants.py`, `simple.py`, `circular_a.py` + `circular_b.py`
 
 **Key assertions:**
@@ -478,15 +478,15 @@ unzip -l dist/codemap-*.whl | grep frontend
 **BLUEPRINT section:** §13.4 (Integration Test Spec — 15 test cases)
 
 **Input yang dibutuhkan:**
-- `codemap.server.app.create_app`
-- `codemap.ai.provider.AnthropicProvider`
+- `graps.server.app.create_app`
+- `graps.ai.provider.AnthropicProvider`
 - `fastapi.testclient.TestClient`
 - Stdlib: `pytest`, monkeypatch
 
 **Pattern:**
 ```python
 from fastapi.testclient import TestClient
-from codemap.server.app import create_app
+from graps.server.app import create_app
 
 def make_client(graph_data, port=8765):
     app = create_app(graph_data=graph_data, port=port)
@@ -495,7 +495,7 @@ def make_client(graph_data, port=8765):
 
 **15 test cases wajib:** Semua ada di tabel §13.4 — baca ulang sebelum implementasi.
 
-**Mocking:** `monkeypatch.setattr("codemap.ai.provider.AnthropicProvider.generate_summary", ...)` — tidak boleh hit API beneran.
+**Mocking:** `monkeypatch.setattr("graps.ai.provider.AnthropicProvider.generate_summary", ...)` — tidak boleh hit API beneran.
 
 **Context boundary — agent TIDAK perlu tahu:**
 - Scanner internals, frontend, CLI, pyproject.toml

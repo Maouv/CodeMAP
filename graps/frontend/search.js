@@ -1,4 +1,4 @@
-/* CodeMAP — Cmd+K node search overlay.
+/* graps — Cmd+K node search overlay.
  *
  * Substring match (case-insensitive) pada node.id / node.path.
  * Max 10 hasil, arrow keys + Enter + Esc.
@@ -7,9 +7,9 @@
  */
 (function () {
   "use strict";
-  window.CodeMAP = window.CodeMAP || {};
-  const store = window.CodeMAP.store;
-  const setState = window.CodeMAP.setState;
+  window.graps = window.graps || {};
+  const store = window.graps.store;
+  const setState = window.graps.setState;
 
   let overlay, input, list;
   let results = [];
@@ -77,7 +77,7 @@
     const n = results[i];
     if (!n) return;
     setState({ selectedNode: n });
-    window.dispatchEvent(new CustomEvent("codemap:pan-to", { detail: { id: n.id } }));
+    window.dispatchEvent(new CustomEvent("graps:pan-to", { detail: { id: n.id } }));
     close();
   }
 

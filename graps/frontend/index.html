@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>CodeMAP</title>
+  <title>graps</title>
 
   <!-- Fonts: Sora (UI) + JetBrains Mono (code). ui-ux §1.2 -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -20,7 +20,7 @@
 
   <!-- TOP BAR ------------------------------------------------- -->
   <header class="top-bar" role="banner">
-    <div class="top-bar-logo">◇ codemap</div>
+    <div class="top-bar-logo">◇ graps</div>
     <span id="path-chip" class="path-chip">./</span>
     <span id="topbar-stats" class="top-bar-stats">—</span>
     <div class="top-bar-spacer"></div>
@@ -64,7 +64,7 @@
 
       <!-- Loading screen (visible by default sampai graph load) -->
       <div id="loading-screen" class="loading-screen">
-        <div class="loading-logo">◇ codemap</div>
+        <div class="loading-logo">◇ graps</div>
         <div class="loading-status">Loading graph…</div>
         <div class="loading-bar-track"><div class="loading-bar-fill"></div></div>
       </div>
@@ -88,7 +88,7 @@
   <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
   <!-- Scripts: urutan penting. toast → filter (store) → graph/panel/search.
-       Tidak pakai type="module" — no build step, IIFE + window.CodeMAP. -->
+       Tidak pakai type="module" — no build step, IIFE + window.graps. -->
   <script src="toast.js"></script>
   <script src="filter.js"></script>
   <script src="graph.js"></script>

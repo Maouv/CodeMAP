@@ -8,8 +8,8 @@ flagged conditional (module only tracks try-body depth).
 import ast
 from pathlib import Path
 
-from codemap.scanner import ast_parser
-from codemap.scanner.ast_parser import safe_parse
+from graps.scanner import ast_parser
+from graps.scanner.ast_parser import safe_parse
 
 FIX = Path(__file__).parent / "fixtures"
 

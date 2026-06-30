@@ -1,11 +1,11 @@
-"""FastAPI app factory untuk CodeMAP (lihat BLUEPRINT.md §10–§12).
+"""FastAPI app factory untuk graps (lihat BLUEPRINT.md §10–§12).
 
 Module ini hanya tahu cara menyusun :class:`FastAPI` dengan:
 
 - middleware keamanan ``enforce_origin`` + ``validate_host`` (BLUEPRINT §11),
 - route ``GET /api/graph`` yang mengembalikan ``graph_data`` apa adanya,
-- route ``POST /api/ai/summary`` yang dispatch ke ``codemap.ai.provider`` dan
-  cache hasilnya via ``codemap.ai.cache``,
+- route ``POST /api/ai/summary`` yang dispatch ke ``graps.ai.provider`` dan
+  cache hasilnya via ``graps.ai.cache``,
 - mount static frontend di ``/`` (paling akhir supaya API tidak ke-shadow).
 
 Pinning host ``127.0.0.1`` adalah tanggung jawab caller (``cli.py``). Module
@@ -28,9 +28,9 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-# ponytail: dipanggil sebagai `python codemap/server/app.py` (self-check) butuh
-# repo root di sys.path supaya `import codemap.ai...` ketemu. Tambah sebelum
-# import codemap.* di bawah. No-op kalau dijalankan via `python -m`.
+# ponytail: dipanggil sebagai `python graps/server/app.py` (self-check) butuh
+# repo root di sys.path supaya `import graps.ai...` ketemu. Tambah sebelum
+# import graps.* di bawah. No-op kalau dijalankan via `python -m`.
 if __name__ == "__main__":
     import sys as _sys
     _sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -38,14 +38,14 @@ if __name__ == "__main__":
 # ponytail: import modul, BUKAN ``from ... import get_provider``. Supaya test
 # (dan integrasi lain) bisa monkeypatch ``provider_module.get_provider`` dan
 # perubahan terlihat di sini juga.
-from codemap.ai import cache as cache_module  # noqa: E402
-from codemap.ai import provider as provider_module  # noqa: E402
-from codemap.ai.provider import AIError  # noqa: E402
+from graps.ai import cache as cache_module  # noqa: E402
+from graps.ai import provider as provider_module  # noqa: E402
+from graps.ai.provider import AIError  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
 FRONTEND_DIR: Path = Path(__file__).parent.parent / "frontend"
-DEFAULT_CACHE_PATH: Path = Path.cwd() / ".codemap" / "cache.json"
+DEFAULT_CACHE_PATH: Path = Path.cwd() / ".graps" / "cache.json"
 
 
 class SummaryRequest(BaseModel):

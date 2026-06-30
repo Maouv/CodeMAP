@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from codemap.scanner.ast_parser import safe_parse
-from codemap.scanner.risk_analyzer import analyze_risks
+from graps.scanner.ast_parser import safe_parse
+from graps.scanner.risk_analyzer import analyze_risks
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

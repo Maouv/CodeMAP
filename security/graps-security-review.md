@@ -1,4 +1,4 @@
-# Security Review — CodeMAP
+# Security Review — graps
 > Reviewer: Security Analyst  
 > Date: 2026-06-27  
 > Scope: Planning documents (architect-review.md, handoff.md, python-packaging-reviewer.md)  
@@ -8,9 +8,9 @@
 
 ## Executive Summary
 
-CodeMAP adalah CLI tool yang men-serve localhost web server (FastAPI) untuk memvisualisasikan dependency graph Python codebase. Tool ini dijalankan **per-user di localhost**, bukan multi-user server — fakta ini mengubah threat model secara fundamental.
+graps adalah CLI tool yang men-serve localhost web server (FastAPI) untuk memvisualisasikan dependency graph Python codebase. Tool ini dijalankan **per-user di localhost**, bukan multi-user server — fakta ini mengubah threat model secara fundamental.
 
-**Threat model yang benar untuk CodeMAP:**
+**Threat model yang benar untuk graps:**
 - Attacker bukan remote hacker di internet
 - Attacker adalah: (1) malicious website yang buka di browser saat tool sedang running, (2) proses lain di machine yang sama, (3) user lain di shared machine (multi-user Linux)
 - Tidak ada "server" yang di-hack — data tetap di machine user
@@ -35,7 +35,7 @@ Ditemukan **9 security findings** (2 Critical, 3 High, 3 Medium, 1 Low) setelah 
 **Attack scenario konkret:**
 
 ```
-1. User jalankan: codemap ./myproject (server up di localhost:8765)
+1. User jalankan: graps ./myproject (server up di localhost:8765)
 2. User buka browser, lalu buka tab baru untuk lihat YouTube / baca artikel
 3. Tab tersebut inject iframe atau fetch() ke http://localhost:8765/api/ai/summary
 4. Request berhasil karena server tidak ada CORS guard + tidak ada auth
@@ -77,7 +77,7 @@ app.add_middleware(
     ],
     allow_credentials=False,
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type", "X-Codemap-Request"],
+    allow_headers=["Content-Type", "X-graps-Request"],
 )
 ```
 
@@ -104,7 +104,7 @@ Ini adalah attack yang lebih advanced tapi nyata untuk localhost tool:
 2. User buka evil.com → resolve ke attacker's server IP
 3. JavaScript di evil.com jalan di browser
 4. 60 detik kemudian, evil.com DNS di-rebind ke 127.0.0.1
-5. Browser sekarang anggap evil.com = localhost → same-origin dengan codemap server
+5. Browser sekarang anggap evil.com = localhost → same-origin dengan graps server
 6. JavaScript bisa fetch() ke "evil.com:8765" yang sebenarnya adalah localhost:8765
 ```
 
@@ -175,7 +175,7 @@ Pastikan key **tidak pernah** masuk ke URL atau query string.
 
 #### B. Environment Variable — Inheritance Risk
 
-Ketika codemap spawn subprocess (saat ini belum ada, tapi mungkin di future untuk timeout implementation via `multiprocessing`), environment variable **diwarisi oleh child process secara default**:
+Ketika graps spawn subprocess (saat ini belum ada, tapi mungkin di future untuk timeout implementation via `multiprocessing`), environment variable **diwarisi oleh child process secara default**:
 
 ```python
 # BERBAHAYA jika subprocess ditambahkan di future:
@@ -348,7 +348,7 @@ Catatan penting: `.env` file aman karena bukan `.py` file. Tapi `settings.py`, `
 AI prompt: "Full file content: [entire file content]"
 ```
 
-Full file dikirim ke Anthropic/OpenAI. Jika file tersebut mengandung credentials hardcoded, credentials tersebut ter-exfiltrate ke cloud provider. Ini adalah satu-satunya titik di CodeMAP di mana data keluar dari machine user.
+Full file dikirim ke Anthropic/OpenAI. Jika file tersebut mengandung credentials hardcoded, credentials tersebut ter-exfiltrate ke cloud provider. Ini adalah satu-satunya titik di graps di mana data keluar dari machine user.
 
 **Severity: CRITICAL** (meskipun tool run di localhost, ini adalah data yang genuinely keluar ke internet)
 
@@ -395,7 +395,7 @@ uvicorn.run(app, host="127.0.0.1", port=port)
 
 **Location:** `handoff.md` → Section 10 (Cache Structure)
 
-**Masalah:** `.codemap/cache.json` disimpan di dalam project directory tanpa file permission restriction. AI summaries berisi inferensi tentang business logic, database structure, dan hidden assumptions — ini adalah sensitive IP. Jika developer lupa add `.codemap/` ke `.gitignore`, cache ter-commit ke GitHub.
+**Masalah:** `.graps/cache.json` disimpan di dalam project directory tanpa file permission restriction. AI summaries berisi inferensi tentang business logic, database structure, dan hidden assumptions — ini adalah sensitive IP. Jika developer lupa add `.graps/` ke `.gitignore`, cache ter-commit ke GitHub.
 
 **Severity: HIGH** (AI summaries mengandung structural insight tentang codebase yang mungkin proprietary)
 
@@ -411,17 +411,17 @@ def write_cache(path: Path, data: dict) -> None:
 
 def startup_check(project_root: Path) -> None:
     gitignore = project_root / ".gitignore"
-    if gitignore.exists() and ".codemap" not in gitignore.read_text():
-        print("⚠️  WARNING: .codemap/ tidak ditemukan di .gitignore")
+    if gitignore.exists() and ".graps" not in gitignore.read_text():
+        print("⚠️  WARNING: .graps/ tidak ditemukan di .gitignore")
         print("   Cache berisi AI summaries bisa ter-commit ke Git.")
-        print("   Tambahkan: echo '.codemap/' >> .gitignore")
+        print("   Tambahkan: echo '.graps/' >> .gitignore")
 ```
 
 ---
 
 ### [MEDIUM] M-01: API Key Leak via Exception Handler dan Traceback
 
-**Location:** `handoff.md` → Section 10 (AI Layer), `codemap/ai/provider.py`
+**Location:** `handoff.md` → Section 10 (AI Layer), `graps/ai/provider.py`
 
 **Masalah:** Beberapa indirect paths di mana API key bisa ter-expose ke log atau terminal output (detail di Q2 section A, B, C):
 - Exception message dari Anthropic/OpenAI SDK bisa berisi key fragment
@@ -514,7 +514,7 @@ Di context localhost-only personal tool: **low operational risk**, tapi perlu di
 
 **Location:** `python-packaging-reviewer.md` → GitHub Actions Publish Workflow
 
-**Masalah:** Workflow publish ke PyPI trigger dari semua tag `v*` tanpa protection rule. Siapapun dengan write access bisa push malicious tag dan publish ke PyPI. Karena ini open source tool yang di-install via `pip install codemap`, supply chain compromise di sini bisa affect semua user.
+**Masalah:** Workflow publish ke PyPI trigger dari semua tag `v*` tanpa protection rule. Siapapun dengan write access bisa push malicious tag dan publish ke PyPI. Karena ini open source tool yang di-install via `pip install graps`, supply chain compromise di sini bisa affect semua user.
 
 **Severity: LOW** (karena masih dalam planning, belum ada contributors lain) → **Naik ke HIGH saat user base berkembang**
 
@@ -557,7 +557,7 @@ Beberapa finding dari draft pertama tidak relevan untuk localhost per-user tool:
 
 **"Arbitrary File Read via Unvalidated Scan Path" (C-01 lama) → Di-downgrade ke konteks**
 
-Dalam threat model yang benar, user yang menjalankan `codemap /etc/` adalah **user itu sendiri** yang memiliki akses ke `/etc/`. Tool tidak memberikan privilege escalation — user sudah punya akses ke file tersebut. Ini bukan vulnerability, ini expected behavior (user bisa scan directory manapun yang mereka punya akses). Yang perlu di-guard adalah output-nya (lihat C-01 baru tentang credentials di constants[]).
+Dalam threat model yang benar, user yang menjalankan `graps /etc/` adalah **user itu sendiri** yang memiliki akses ke `/etc/`. Tool tidak memberikan privilege escalation — user sudah punya akses ke file tersebut. Ini bukan vulnerability, ini expected behavior (user bisa scan directory manapun yang mereka punya akses). Yang perlu di-guard adalah output-nya (lihat C-01 baru tentang credentials di constants[]).
 
 Satu-satunya edge case yang masih relevan: **symlink traversal di codebase yang di-clone dari internet** (malicious repo yang berisi symlink ke `/etc/hosts`). Ini tetap worth di-guard dengan symlink depth limit, tapi bukan Critical.
 

@@ -333,8 +333,8 @@
       function: fnName,
       line: fn.line_start || 0,
       modified_at: node.file_modified_at || "",
-      // ponytail: parser belum ekstrak source raw — kirim "". AI akan
-      // underpowered tapi tetap jalan; cache invalidate via modified_at.
+      // ponytail: parser belum ekstrak source raw — kirim "". Server menolak
+      // dengan reason "no_source" sampai source extraction di-wire (Finding 7).
       source: "",
     };
 

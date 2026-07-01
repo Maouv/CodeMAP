@@ -268,3 +268,25 @@ def test_ai_summary__cache_invalidation_on_modified_at_change(simple_graph, tmp_
     r2 = c.post("/api/ai/summary", json=body2, headers=hdrs)
     assert r2.json()["cached"] is False
     assert calls == 2
+
+
+def test_ai_summary__rejects_empty_source(simple_graph, tmp_path, ai_body, monkeypatch):
+    # ponytail: trust-boundary guard — source kosong tidak boleh bill AI (Finding 7)
+    called = {"n": 0}
+
+    class Fake:
+        name = "fake"
+
+        def generate_summary(self, src, ctx):
+            called["n"] += 1
+            return {"role": "r", "importance": "i", "hidden_assumption": "h"}
+
+    monkeypatch.setattr("graps.ai.provider.get_provider", lambda: Fake())
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    c = _client(simple_graph, tmp_path)
+    hdrs = _hdr(host=f"127.0.0.1:{PORT}", origin=f"http://127.0.0.1:{PORT}")
+
+    for empty in ("", "   "):
+        r = c.post("/api/ai/summary", json={**ai_body, "source": empty}, headers=hdrs)
+        assert r.json() == {"enabled": False, "reason": "no_source"}, empty
+    assert called["n"] == 0  # provider tidak dipanggil untuk source kosong

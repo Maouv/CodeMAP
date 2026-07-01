@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from graps.scanner import ParsedFile
 
@@ -24,7 +25,7 @@ def _rel(path: Path, root: Path) -> str:
         return str(path)  # already relative / outside root
 
 
-def _sanitized_constants(raw: list[dict]) -> list[dict]:
+def _sanitized_constants(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Run every constant value through sanitize_constant_value (C-01).
 
     ponytail: Phase 2 extracts module constants in the parser; sanitize is
@@ -50,7 +51,7 @@ def _warning_type(msg: str) -> str:
     return "scan_warning"
 
 
-def _build_node(result: ParsedFile, all_results: list[ParsedFile], root: Path) -> dict:
+def _build_node(result: ParsedFile, all_results: list[ParsedFile], root: Path) -> dict[str, Any]:
     rel = _rel(result.path, root)
     risks = analyze_risks(result, all_results)
 
@@ -98,9 +99,9 @@ def _build_node(result: ParsedFile, all_results: list[ParsedFile], root: Path) -
     }
 
 
-def _build_edges(results: list[ParsedFile], root: Path) -> list[dict]:
+def _build_edges(results: list[ParsedFile], root: Path) -> list[dict[str, Any]]:
     """One edge per (source, resolved target). weight = #import names to target."""
-    edges: dict[tuple[str, str], dict] = {}
+    edges: dict[tuple[str, str], dict[str, Any]] = {}
     for result in results:
         src = _rel(result.path, root)
         for imp in result.imports:
@@ -119,11 +120,11 @@ def _build_edges(results: list[ParsedFile], root: Path) -> list[dict]:
     return list(edges.values())
 
 
-def build_graph(results: list[ParsedFile], root: Path) -> dict:
+def build_graph(results: list[ParsedFile], root: Path) -> dict[str, Any]:
     edges = _build_edges(results, root)
     nodes = [_build_node(r, results, root) for r in results]
 
-    warnings: list[dict] = []
+    warnings: list[dict[str, Any]] = []
     for result in results:
         rel = _rel(result.path, root)
         for w in result.warnings:

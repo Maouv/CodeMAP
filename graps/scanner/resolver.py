@@ -76,7 +76,7 @@ if __name__ == "__main__":
     main = pkg / "main.py"
     main.write_text("")
 
-    def imp(t):
+    def imp(t: str) -> ParsedImport:
         return ParsedImport(target=t, lineno=1)
 
     assert resolve_import(imp(".sub"), main, root) == Path("pkg/sub.py")

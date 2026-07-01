@@ -16,6 +16,7 @@ import tempfile
 import threading
 import webbrowser
 from pathlib import Path
+from typing import Any
 
 import typer
 import uvicorn
@@ -44,14 +45,14 @@ def _discover(path: Path, exclude: set[str]) -> list[Path]:
     ]
 
 
-def _build(path: Path, exclude: set[str]) -> dict:
+def _build(path: Path, exclude: set[str]) -> dict[str, Any]:
     """Discover + parse + build_graph. Dipisah supaya self-check bisa panggil tanpa server."""
     files = _discover(path, exclude)
     results = [safe_parse(p) for p in files]
     return build_graph(results, root=path)
 
 
-def _count_risks(graph: dict) -> dict[str, int]:
+def _count_risks(graph: dict[str, Any]) -> dict[str, int]:
     """Hitung risk per criticality dari graph (file-level risks)."""
     counts = {"high": 0, "medium": 0, "low": 0}
     for node in graph.get("nodes", []):
@@ -197,9 +198,9 @@ def main(
     typer.echo(f"  Server running at http://localhost:{port}")
     if not no_browser:
         typer.echo("  Opening browser...")
-        threading.Timer(
-            1.0, lambda: webbrowser.open(f"http://localhost:{port}")
-        ).start()
+        timer = threading.Timer(1.0, lambda: webbrowser.open(f"http://localhost:{port}"))
+        timer.daemon = True  # ponytail: jangan block exit kalau server.run() gagal (Finding 6)
+        timer.start()
     typer.echo("  Press Ctrl+C to stop")
     typer.echo("")
 

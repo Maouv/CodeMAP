@@ -113,7 +113,7 @@ class AIError(Exception):
         self.retry_after = retry_after
 
 
-def _build_prompt(file_content: str, function_context: dict) -> str:
+def _build_prompt(file_content: str, function_context: dict[str, object]) -> str:
     """Susun prompt single-shot yang minta JSON tiga-field.
 
     ``function_context`` minimal punya ``name``, ``file``, ``line``.
@@ -143,7 +143,7 @@ class AIProvider:
     model: str = ""
     name: str = ""
 
-    def generate_summary(self, file_content: str, function_context: dict) -> dict:
+    def generate_summary(self, file_content: str, function_context: dict[str, object]) -> dict[str, object]:
         raise NotImplementedError
 
 
@@ -151,7 +151,7 @@ class AnthropicProvider(AIProvider):
     model = "claude-haiku-4-5-20251001"
     name = "anthropic"
 
-    def generate_summary(self, file_content: str, function_context: dict) -> dict:
+    def generate_summary(self, file_content: str, function_context: dict[str, object]) -> dict[str, object]:
         # ponytail: lazy import — SDK adalah optional extra (BLUEPRINT Phase 1).
         try:
             import anthropic
@@ -204,7 +204,7 @@ class OpenAIProvider(AIProvider):
     model = "gpt-4o-mini"
     name = "openai"
 
-    def generate_summary(self, file_content: str, function_context: dict) -> dict:
+    def generate_summary(self, file_content: str, function_context: dict[str, object]) -> dict[str, object]:
         # ponytail: lazy import — SDK adalah optional extra.
         try:
             import openai
@@ -253,7 +253,7 @@ class OpenAIProvider(AIProvider):
         return _parse_summary(text)
 
 
-def _parse_summary(text: str) -> dict:
+def _parse_summary(text: str) -> dict[str, object]:
     """Parse JSON string ke dict tiga-field. Raise ``AIError("parse_failed")``
     kalau bukan JSON valid."""
     try:
@@ -271,7 +271,7 @@ def _parse_summary(text: str) -> dict:
     }
 
 
-def get_provider() -> "AIProvider | None":
+def get_provider() -> AIProvider | None:
     """Pilih provider berdasarkan env var. Anthropic dulu, OpenAI fallback."""
     if os.getenv("ANTHROPIC_API_KEY"):
         return AnthropicProvider()

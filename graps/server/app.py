@@ -19,8 +19,10 @@ endpoint sudah lewat ~10.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -64,7 +66,7 @@ class SummaryRequest(BaseModel):
 
 
 def create_app(
-    graph_data: dict,
+    graph_data: dict[str, Any],
     port: int,
     cache_path: Path | None = None,
 ) -> FastAPI:
@@ -97,7 +99,7 @@ def create_app(
     )
 
     @app.middleware("http")
-    async def enforce_origin(request: Request, call_next):
+    async def enforce_origin(request: Request, call_next: Callable[[Request], Awaitable[Any]]) -> Any:
         """Tolak POST/PUT/DELETE tanpa Origin valid (CSRF guard, BLUEPRINT §11).
 
         Fail-closed: state-mutating methods WAJIB membawa Origin yang sah.
@@ -112,7 +114,7 @@ def create_app(
         return await call_next(request)
 
     @app.middleware("http")
-    async def validate_host(request: Request, call_next):
+    async def validate_host(request: Request, call_next: Callable[[Request], Awaitable[Any]]) -> Any:
         """DNS rebinding protection — Host header harus localhost/127.0.0.1."""
         host = request.headers.get("host", "")
         if host not in (f"localhost:{port}", f"127.0.0.1:{port}"):
@@ -120,18 +122,21 @@ def create_app(
         return await call_next(request)
 
     @app.get("/api/graph")
-    def get_graph() -> dict:
+    def get_graph() -> dict[str, object]:
         """Return graph hasil scanner apa adanya."""
         return graph_data
 
     @app.post("/api/ai/summary")
-    def post_summary(req: SummaryRequest) -> dict:
+    def post_summary(req: SummaryRequest) -> dict[str, object]:
         """Generate (atau ambil dari cache) AI summary untuk satu function.
 
         Semua error AI dikembalikan sebagai HTTP 200 dengan ``error_type``
         supaya browser tidak memunculkan dialog auth dan frontend bisa
         memutuskan UI sendiri (BLUEPRINT §10).
         """
+        # ponytail: trust-boundary — source kosong ditolak sebelum provider dipanggil (Finding 7)
+        if not req.source.strip():
+            return {"enabled": False, "reason": "no_source"}
         provider = provider_module.get_provider()
         if provider is None:
             return {"enabled": False, "reason": "no_api_key"}
@@ -156,7 +161,7 @@ def create_app(
             # sdk_not_installed = AI tidak tersedia fungsional → enabled False.
             if e.error_type == "sdk_not_installed":
                 return {"enabled": False, "reason": "sdk_not_installed"}
-            payload: dict = {"enabled": True, "error_type": e.error_type}
+            payload: dict[str, Any] = {"enabled": True, "error_type": e.error_type}
             if e.error_type == "rate_limited" and e.retry_after is not None:
                 payload["retry_after"] = e.retry_after
             return payload
@@ -203,7 +208,7 @@ if __name__ == "__main__":
     PORT = 8765
     HOST_OK = f"127.0.0.1:{PORT}"
     ORIGIN_OK = f"http://127.0.0.1:{PORT}"
-    GRAPH = {"meta": {}, "nodes": [], "edges": [], "warnings": []}
+    GRAPH: dict[str, Any] = {"meta": {}, "nodes": [], "edges": [], "warnings": []}
 
     # Save env supaya self-check tidak bocor key dev ke logika "no_api_key".
     saved_env = {
@@ -262,10 +267,10 @@ if __name__ == "__main__":
             class _FakeAuthFail:
                 name = "fake"
 
-                def generate_summary(self, src, ctx):
+                def generate_summary(self, src: str, ctx: dict[str, Any]) -> None:
                     raise AIError("auth_failed")
 
-            provider_module.get_provider = lambda: _FakeAuthFail()
+            provider_module.get_provider = lambda: _FakeAuthFail()  # type: ignore[assignment,return-value]
             r = client.post(
                 "/api/ai/summary",
                 json=body,
@@ -279,11 +284,11 @@ if __name__ == "__main__":
                 name = "fake"
                 calls = 0
 
-                def generate_summary(self, src, ctx):
+                def generate_summary(self, src: str, ctx: dict[str, Any]) -> dict[str, Any]:
                     type(self).calls += 1
                     return {"role": "r", "importance": "i", "hidden_assumption": "h"}
 
-            provider_module.get_provider = lambda: _FakeOK()
+            provider_module.get_provider = lambda: _FakeOK()  # type: ignore[assignment,return-value]
             r1 = client.post(
                 "/api/ai/summary",
                 json=body,
@@ -315,4 +320,3 @@ if __name__ == "__main__":
         for k, v in saved_env.items():
             if v is not None:
                 os.environ[k] = v
-

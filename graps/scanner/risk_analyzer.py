@@ -5,9 +5,9 @@ from __future__ import annotations
 from .ast_parser import ParseResult
 
 
-def analyze_risks(result: ParseResult, all_results: list[ParseResult]) -> list[dict]:
+def analyze_risks(result: ParseResult, all_results: list[ParseResult]) -> list[dict[str, object]]:
     """Return risk dicts for `result`. Phase 1 implements only star_import (§9)."""
-    risks: list[dict] = []
+    risks: list[dict[str, object]] = []
     for imp in result.imports:
         if imp.is_star:
             risks.append({
@@ -30,16 +30,18 @@ def analyze_risks(result: ParseResult, all_results: list[ParseResult]) -> list[d
 
 
 if __name__ == "__main__":
+    from pathlib import Path
+
     from .ast_parser import ParsedImport
 
     with_star = ParseResult(
-        path="m.py",
+        path=Path("m.py"),
         imports=[ParsedImport(target="a", lineno=2, is_star=True)],
     )
     r = analyze_risks(with_star, [with_star])
     assert len(r) == 1 and r[0]["type"] == "star_import", r
 
-    no_star = ParseResult(path="n.py", imports=[ParsedImport(target="os", lineno=1)])
+    no_star = ParseResult(path=Path("n.py"), imports=[ParsedImport(target="os", lineno=1)])
     assert analyze_risks(no_star, [no_star]) == []
 
     print("self-check ok")

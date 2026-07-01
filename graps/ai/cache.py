@@ -23,11 +23,12 @@ import json
 import os
 import threading
 from pathlib import Path
+from typing import Any
 
-_DEFAULT: dict = {"version": "1", "entries": {}}
+_DEFAULT: dict[str, Any] = {"version": "1", "entries": {}}
 
 
-def read_cache(cache_path: Path) -> dict:
+def read_cache(cache_path: Path) -> dict[str, Any]:
     """Parse cache JSON dari ``cache_path``.
 
     Return default ``{"version": "1", "entries": {}}`` kalau file belum ada,
@@ -35,7 +36,7 @@ def read_cache(cache_path: Path) -> dict:
     putuskan mau log atau tidak.
     """
     try:
-        data = json.loads(cache_path.read_text())
+        data: dict[str, Any] = json.loads(cache_path.read_text())
     except (FileNotFoundError, json.JSONDecodeError):
         return {"version": "1", "entries": {}}
     if not isinstance(data, dict):
@@ -63,7 +64,7 @@ def _get_lock(cache_path: Path) -> threading.Lock:
         return _cache_locks.setdefault(cache_path, threading.Lock())
 
 
-def write_cache(cache_path: Path, key: str, entry: dict) -> None:
+def write_cache(cache_path: Path, key: str, entry: dict[str, Any]) -> None:
     """Merge ``entry`` ke ``entries[key]`` lalu tulis atomik dengan permission 0o600.
 
     Atomik = tulis ke ``<path>.tmp`` dulu, chmod 0o600, baru rename. Ini
@@ -94,7 +95,7 @@ def write_cache(cache_path: Path, key: str, entry: dict) -> None:
         os.chmod(cache_path, 0o600)
 
 
-def is_valid(entry: dict, current_modified_at: str) -> bool:
+def is_valid(entry: dict[str, Any], current_modified_at: str) -> bool:
     """True kalau ``entry.file_modified_at`` sama dengan ``current_modified_at``."""
     return entry.get("file_modified_at") == current_modified_at
 
@@ -154,7 +155,7 @@ if __name__ == "__main__":
         N = 20
         barrier = threading.Barrier(N)
 
-        def _cw(p, k, v):
+        def _cw(p: Path, k: str, v: str) -> None:
             barrier.wait()
             write_cache(p, k, {"file_modified_at": "2026-01-01", "summary": {"role": v}})
 

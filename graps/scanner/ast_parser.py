@@ -56,7 +56,7 @@ def safe_parse(path: Path) -> ParsedFile:
     # ponytail: signal.alarm is Unix-only; non-Unix runs without a timeout guard.
     has_alarm = hasattr(signal, "SIGALRM")
 
-    def _timeout(signum, frame):
+    def _timeout(signum: int, frame: object) -> None:
         raise TimeoutError
 
     if has_alarm:
@@ -120,7 +120,7 @@ class _ScannerVisitor(ast.NodeVisitor):
     def _qual(self, name: str) -> str:
         return ".".join(self._scope + [name])
 
-    def _handle_func(self, node) -> None:
+    def _handle_func(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         is_nested = "func" in self._kind  # an enclosing function exists
         self.functions.append(ParsedFunction(
             name=node.name,

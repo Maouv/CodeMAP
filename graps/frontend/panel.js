@@ -23,11 +23,8 @@
       .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
-  function basename(p) {
-    if (!p) return "";
-    const i = p.lastIndexOf("/");
-    return i >= 0 ? p.slice(i + 1) : p;
-  }
+  // ponytail: basename() di-share dari graph.js via window.graps (Finding 14)
+  const basename = window.graps.basename;
 
   function fmtParam(p) {
     if (!p) return "";

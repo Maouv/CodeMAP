@@ -95,7 +95,7 @@
       // tapi tetap connected. ponytail: simple — kalau ada minimal 1 fungsi
       // non-dead → bukan dead.
       const fns = node.functions || [];
-      if (fns.length === 0) return true;
+      if (fns.length === 0) return false;  // zero-function files: neutral, show them (Finding 12)
       const allDead = fns.every((fn) => fn.is_dead_code);
       if (!allDead) return true;
     }
@@ -290,6 +290,7 @@
     const i = p.lastIndexOf("/");
     return i >= 0 ? p.slice(i + 1) : p;
   }
+  window.graps.basename = basename;  // Finding 14: shared ke panel.js
 
   function escapeHtml(s) {
     return String(s == null ? "" : s)

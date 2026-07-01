@@ -86,6 +86,12 @@ def create_app(
     if cache_path is None:
         cache_path = DEFAULT_CACHE_PATH
 
+    # report-bug-finder Finding 13: in-memory cache layer supaya cache-hit O(1),
+    # bukan O(file_size) read + json.loads setiap POST /api/ai/summary.
+    # ponytail: dict polos scoped per create_app() call, bukan module-level,
+    # supaya test fixture terisolasi.
+    _mem_cache: dict[str, dict[str, Any]] = {}
+
     app = FastAPI()
     allowed = (f"http://localhost:{port}", f"http://127.0.0.1:{port}")
 
@@ -116,7 +122,7 @@ def create_app(
     @app.middleware("http")
     async def validate_host(request: Request, call_next: Callable[[Request], Awaitable[Any]]) -> Any:
         """DNS rebinding protection — Host header harus localhost/127.0.0.1."""
-        host = request.headers.get("host", "")
+        host = request.headers.get("host", "").lower()
         if host not in (f"localhost:{port}", f"127.0.0.1:{port}"):
             return JSONResponse({"error": "Invalid Host"}, status_code=400)
         return await call_next(request)
@@ -142,6 +148,15 @@ def create_app(
             return {"enabled": False, "reason": "no_api_key"}
 
         key = f"{req.file}::{req.function}"
+        # ponytail: cek in-memory cache dulu — O(1) vs O(file_size) parse (Finding 13)
+        mem_hit = _mem_cache.get(key)
+        if mem_hit and cache_module.is_valid(mem_hit, req.modified_at):
+            return {
+                "enabled": True,
+                "cached": True,
+                "summary": mem_hit["summary"],
+                "provider": mem_hit["provider"],
+            }
         cache = cache_module.read_cache(cache_path)
         hit = cache["entries"].get(key)
         if hit and cache_module.is_valid(hit, req.modified_at):
@@ -179,6 +194,13 @@ def create_app(
                 "summary": summary,
             },
         )
+        # ponytail: update in-memory cache juga (Finding 13)
+        _mem_cache[key] = {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "file_modified_at": req.modified_at,
+            "provider": provider.name,
+            "summary": summary,
+        }
         return {
             "enabled": True,
             "cached": False,

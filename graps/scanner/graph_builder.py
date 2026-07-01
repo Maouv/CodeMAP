@@ -90,7 +90,7 @@ def _build_node(result: ParsedFile, all_results: list[ParsedFile], root: Path) -
         "functions": functions,
         "classes": [],             # ponytail: Phase 2 class extraction in parser
         "imports": imports,
-        "constants": _sanitized_constants([]),  # ponytail: Phase 2 supplies raw constants; C-01 wired
+        "constants": _sanitized_constants(result.constants),  # C-01: parser constants → sanitize → graph
         "has_all_definition": bool(result.exported_names),
         "exported_names": result.exported_names,
         "file_modified_at": None,  # ponytail: passed from CLI stat() in a later phase
@@ -160,16 +160,25 @@ if __name__ == "__main__":
             id="svc.py", path=root / "svc.py",
             functions=[ParsedFunction(name="hello", lineno=2)],
         )
-        graph = build_graph([star, svc], root)
+        # Finding 1 regression: constants must flow parser → build_graph → C-01 sanitize.
+        cfg = ParsedFile(
+            id="cfg.py", path=root / "cfg.py",
+            constants=[{"name": "MAX_RETRY", "value": "3", "line": 1},
+                       {"name": "DB_PASSWORD", "value": "hunter2", "line": 2}],
+        )
+        graph = build_graph([star, svc, cfg], root)
 
         assert set(graph) == {"meta", "nodes", "edges", "warnings"}, graph.keys()
-        assert graph["meta"]["total_files"] == 2
+        assert graph["meta"]["total_files"] == 3
         # star_import → warning (resolver gives star imports no edge, §7).
         assert any(w["type"] == "star_import" for w in graph["warnings"]), graph["warnings"]
-        # constants sanitize path never crashes on empty input.
-        assert all(n["constants"] == [] for n in graph["nodes"])
-        # C-01 wiring proof: a sensitive constant is redacted through the helper.
-        out = _sanitized_constants([{"name": "DB_PASSWORD", "value": "hunter2", "line": 1}])
-        assert out[0]["value"] == "[REDACTED]", out
+        # C-01 wiring proof through the real build_graph path (not the helper in isolation).
+        nodes = {n["id"]: n for n in graph["nodes"]}
+        assert nodes["cfg.py"]["constants"] == [
+            {"name": "MAX_RETRY", "value": "3", "line": 1},
+            {"name": "DB_PASSWORD", "value": "[REDACTED]", "line": 2},
+        ], nodes["cfg.py"]["constants"]
+        # files without parser constants stay empty.
+        assert nodes["star.py"]["constants"] == [] and nodes["svc.py"]["constants"] == []
 
     print("self-check ok")

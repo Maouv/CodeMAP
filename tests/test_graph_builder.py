@@ -8,6 +8,7 @@ Sanitize wiring (C-01) is tested via _sanitized_constants helper directly.
 from datetime import datetime
 from pathlib import Path
 
+from graps.scanner import ParsedFile
 from graps.scanner.ast_parser import safe_parse
 from graps.scanner.graph_builder import build_graph, _sanitized_constants
 
@@ -106,6 +107,20 @@ def test_build_graph__constants_default_empty(tmp_path):
     nodes = build_graph(results, root)["nodes"]
     assert all(n["constants"] == [] for n in nodes)
     # ponytail: Phase 2 — saat parser ekstrak constants, ganti test ini ke assert constants ter-extract
+
+
+def test_build_graph__constants_flow_through_and_redact(tmp_path):
+    # Finding 1 regression: ParsedFile.constants must reach graph output via C-01.
+    pf = ParsedFile(
+        id="cfg.py", path=tmp_path / "cfg.py",
+        constants=[{"name": "MAX_RETRY", "value": "3", "line": 1},
+                   {"name": "DB_PASSWORD", "value": "hunter2", "line": 2}],
+    )
+    node = build_graph([pf], tmp_path)["nodes"][0]
+    assert node["constants"] == [
+        {"name": "MAX_RETRY", "value": "3", "line": 1},
+        {"name": "DB_PASSWORD", "value": "[REDACTED]", "line": 2},
+    ], node["constants"]
 
 
 def test_sanitized_constants__redacts_db_password():

@@ -98,10 +98,16 @@ def create_app(
 
     @app.middleware("http")
     async def enforce_origin(request: Request, call_next):
-        """Tolak POST/PUT/DELETE dari origin asing (CSRF guard, BLUEPRINT §11)."""
+        """Tolak POST/PUT/DELETE tanpa Origin valid (CSRF guard, BLUEPRINT §11).
+
+        Fail-closed: state-mutating methods WAJIB membawa Origin yang sah.
+        Browser selalu set Origin pada same-origin POST, jadi frontend tetap
+        jalan; non-browser client (curl/script) yang omit Origin ditolak 403
+        supaya tidak bisa bypass CSRF guard (report-bug-finder Finding 2).
+        """
         if request.method in ("POST", "PUT", "DELETE"):
             origin = request.headers.get("origin", "")
-            if origin and not any(origin.startswith(a) for a in allowed):
+            if not origin or not any(origin.startswith(a) for a in allowed):
                 return JSONResponse({"error": "Forbidden"}, status_code=403)
         return await call_next(request)
 
@@ -235,6 +241,11 @@ if __name__ == "__main__":
                 json=body,
                 headers={"host": HOST_OK, "origin": "http://evil.com"},
             )
+            assert r.status_code == 403, r.status_code
+            assert r.json() == {"error": "Forbidden"}, r.json()
+
+            # 3b. Tanpa Origin (curl-style) → 403 (fail-closed CSRF guard, Finding 2).
+            r = client.post("/api/ai/summary", json=body, headers={"host": HOST_OK})
             assert r.status_code == 403, r.status_code
             assert r.json() == {"error": "Forbidden"}, r.json()
 

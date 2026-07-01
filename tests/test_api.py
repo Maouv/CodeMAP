@@ -134,11 +134,11 @@ def test_security__post_invalid_origin_403(simple_graph, tmp_path, ai_body):
     assert r.json() == {"error": "Forbidden"}
 
 
-def test_security__post_no_origin_allowed(simple_graph, tmp_path, ai_body, monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+def test_security__post_no_origin_rejected_403(simple_graph, tmp_path, ai_body):
+    # Fail-closed CSRF guard: no Origin header → 403 (report-bug-finder Finding 2).
     r = _client(simple_graph, tmp_path).post("/api/ai/summary", json=ai_body, headers=_hdr(host=f"127.0.0.1:{PORT}"))
-    assert r.status_code != 403
+    assert r.status_code == 403
+    assert r.json() == {"error": "Forbidden"}
 
 
 def test_security__post_valid_origin_passes(simple_graph, tmp_path, ai_body, monkeypatch):

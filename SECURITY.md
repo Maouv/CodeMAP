@@ -34,7 +34,7 @@ sendiri (output AI agent, dependency, konfigurasi yang di-paste).
 
 Kirim laporan lewat **GitHub Security Advisory**: buka tab "Security" →
 "Report a vulnerability" di repository, atau langsung di
-<https://github.com/Maouv/CodeMAP/security/advisories/new>.
+<https://github.com/Maouv/graps/security/advisories/new>.
 
 Sertakan: langkah repro, versi graps, dan dampak yang kamu observasi. Tolong
 jangan buka public issue untuk vulnerability yang belum di-fix — biar maintainer

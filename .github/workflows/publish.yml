@@ -24,11 +24,11 @@ jobs:
 
       - name: Verify frontend assets in wheel
         run: |
-          unzip -l dist/codemap-*.whl | grep "codemap/frontend/"
+          unzip -l dist/graps-*.whl | grep "graps/frontend/"
           # Fail if frontend files are missing
-          unzip -l dist/codemap-*.whl | grep -q "codemap/frontend/index.html" || \
+          unzip -l dist/graps-*.whl | grep -q "graps/frontend/index.html" || \
             (echo "ERROR: frontend/index.html missing from wheel" && exit 1)
-          unzip -l dist/codemap-*.whl | grep -q "codemap/frontend/graph.js" || \
+          unzip -l dist/graps-*.whl | grep -q "graps/frontend/graph.js" || \
             (echo "ERROR: frontend/graph.js missing from wheel" && exit 1)
           echo "Wheel contents verified OK"
 

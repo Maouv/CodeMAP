@@ -25,7 +25,7 @@ Belum ada — **ini scope Phase 3**:
 ❌ scrub_secrets() masih regex manual 3 pattern — upgrade ke detect-secrets
 ❌ Verifikasi chmod 600 untuk .graps/cache.json benar-benar diterapkan
 ❌ Verifikasi .gitignore check untuk .graps/ saat startup
-❌ SECURITY.md (file user-facing, beda dari security/codemap-security-review.md)
+❌ SECURITY.md (file user-facing, beda dari security/graps-security-review.md)
 ❌ BaseParser Protocol interface (BLUEPRINT §4) — prasyarat Phase 4
 ```
 
@@ -205,7 +205,7 @@ User klik [Generate AI Insight] pertama kali dalam sesi ini
               }
               ```
 
-              Consent di-reset setiap kali server di-restart (`codemap .` dijalankan ulang) — sesuai sifat tool yang per-sesi, bukan aplikasi yang persist data antar run.
+              Consent di-reset setiap kali server di-restart (`graps .` dijalankan ulang) — sesuai sifat tool yang per-sesi, bukan aplikasi yang persist data antar run.
 
               **Selesai ketika:** modal muncul sekali per sesi server, tidak muncul lagi untuk function lain dalam sesi yang sama.
 
@@ -262,7 +262,7 @@ def _ensure_cache_file(cache_path: Path) -> None:
 
 ### Task 4 — SECURITY.md (file user-facing, root repo)
 
-**Baca:** `security/codemap-security-review.md` (review internal, sudah ada) — distill jadi versi pendek untuk user.
+**Baca:** `security/graps-security-review.md` (review internal, sudah ada) — distill jadi versi pendek untuk user.
 **Bukan technical deep-dive** — ini yang dibaca orang sebelum install/pakai tool.
 
 **Struktur:**

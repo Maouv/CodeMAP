@@ -34,12 +34,14 @@ jobs:
         run: |
           python -c "
           from pathlib import Path
-          from codemap.scanner.graph_builder import build_graph
+          from graps.scanner.graph_builder import build_graph
+          from graps.scanner.ast_parser import safe_parse
           import json, tempfile, os
 
           tmp = Path(tempfile.mkdtemp())
           (tmp / 'main.py').write_text('import os\ndef foo(): pass\n')
-          graph = build_graph(tmp)
+          results = [safe_parse(p) for p in tmp.rglob("*.py")]
+          graph = build_graph(results, root=tmp)
           dumped = json.dumps(graph)
           assert str(tmp) not in dumped, 'Absolute path leaked into graph JSON'
           print('Path leak check: OK')

@@ -33,6 +33,7 @@
   };
   const RING_WIDTH = { clean: 1.5, yellow: 2, red: 2.5 };
   const NODE_FILL = "oklch(18% 0.008 75)";
+  const NODE_FILL_UNSUPPORTED = "oklch(35% 0.005 75)";
   const EDGE_DEFAULT = "oklch(65% 0.008 75)";
   const EDGE_ACTIVE = "oklch(94% 0.006 75)";
 
@@ -148,17 +149,31 @@
       const risk = nodeRisk(n);
       const ring = RING[risk] || RING.clean;
       const rw = RING_WIDTH[risk] || 1.5;
+      const unsupported = n.supported === false;
       let opacity = 0.65;
       const dim = isDimmed(n);
       if (dim) opacity = 0.1;
+      else if (unsupported) opacity = 0.5;
       else if (focus && n === focus) opacity = 1.0;
       else if (focus) opacity = 0.85;
       ctx.globalAlpha = opacity;
 
       ctx.beginPath();
       ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-      ctx.fillStyle = NODE_FILL;
+      ctx.fillStyle = unsupported ? NODE_FILL_UNSUPPORTED : NODE_FILL;
       ctx.fill();
+
+      // ponytail: unsupported → dashed border, no risk ring.
+      if (unsupported) {
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+        ctx.strokeStyle = "oklch(50% 0.005 75)";
+        ctx.lineWidth = 1.5 / transform.k;
+        ctx.stroke();
+        ctx.setLineDash([]);
+        continue;
+      }
 
       ctx.beginPath();
       ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
@@ -268,6 +283,17 @@
   function showTooltip(node, ev) {
     const tip = document.getElementById("tooltip");
     if (!tip || !node) return;
+    if (node.supported === false) {
+      tip.innerHTML =
+        '<div class="tooltip-filename">' + escapeHtml(basename(node.path || node.id)) + "</div>" +
+        '<div class="tooltip-path">' + escapeHtml(node.path || node.id) + "</div>" +
+        '<div class="tooltip-divider"></div>' +
+        '<div class="tooltip-meta">⚠ ' + escapeHtml(node.unsupported_reason || "unsupported") + "</div>";
+      tip.style.display = "block";
+      tip.style.left = (ev.clientX + 14) + "px";
+      tip.style.top = (ev.clientY + 14) + "px";
+      return;
+    }
     const risk = node.risk_summary || "";
     const fns = (node.functions || []).length;
     tip.innerHTML =
@@ -425,7 +451,7 @@
 
     canvas.addEventListener("click", (ev) => {
       const n = nodeAt(ev.clientX, ev.clientY);
-      if (n) setState({ selectedNode: n });
+      if (n && n.supported !== false) setState({ selectedNode: n });
     });
 
     document.addEventListener("keydown", (ev) => {

@@ -10,6 +10,7 @@ ponytail: tidak pakai Rich/Click/colorama. typer.echo + print biasa cukup.
 from __future__ import annotations
 
 import errno
+import logging
 import os
 import socket
 import tempfile
@@ -28,27 +29,67 @@ if __name__ == "__main__":
     _sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from graps import __version__  # noqa: E402
+from graps.scanner import ParsedFile  # noqa: E402
 from graps.scanner.ast_parser import safe_parse
 from graps.scanner.graph_builder import build_graph
-from graps.server.app import create_app
+from graps.scanner.tree_sitter_parser import TreeSitterParser  # Phase 4
+from graps.server.app import create_app  # noqa: E402
 
 app = typer.Typer(add_completion=False)
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_EXCLUDES = ("__pycache__", ".git", ".venv", "venv", "node_modules")
 
 
 def _discover(path: Path, exclude: set[str]) -> list[Path]:
-    """Cari .py rekursif, drop apa pun yang punya part di `exclude`."""
-    return [
-        p for p in path.rglob("*.py")
-        if not (set(p.parts) & exclude)
-    ]
+    """Cari file rekursif yang didukung tree-sitter-language-pack (306 bahasa).
+
+    Fallback ke ``*.py`` kalau library tidak terinstall.
+    """
+    try:
+        from tree_sitter_language_pack import detect_language_from_path
+        use_tslp = True
+    except ImportError:
+        use_tslp = False
+
+    files: list[Path] = []
+    for p in path.rglob("*"):
+        if not p.is_file():
+            continue
+        if set(p.parts) & exclude:
+            continue
+        if use_tslp:
+            if detect_language_from_path(str(p)) is not None:
+                files.append(p)
+        elif p.suffix == ".py":
+            files.append(p)
+    return files
+
+
+def _parse_file(path: Path, root: Path) -> ParsedFile | None:
+    """Dispatch parser per file.
+
+    TreeSitterParser dulu. Kalau gagal dan file .py → fallback ke ASTParser.
+    Non-Python tanpa fallback → None (unsupported).
+    """
+    ts_parser = TreeSitterParser()
+    result = ts_parser.parse_file(path, root)
+
+    if result is not None:
+        return result
+
+    if path.suffix == ".py":
+        logger.debug("tree-sitter failed for %s, falling back to ASTParser", path)
+        return safe_parse(path)
+
+    return None
 
 
 def _build(path: Path, exclude: set[str]) -> dict[str, Any]:
     """Discover + parse + build_graph. Dipisah supaya self-check bisa panggil tanpa server."""
     files = _discover(path, exclude)
-    results = [safe_parse(p) for p in files]
+    results = [r for r in (_parse_file(p, path) for p in files) if r is not None]
     return build_graph(results, root=path)
 
 
@@ -141,13 +182,13 @@ def main(
         # Buang trailing slash supaya "tests/" cocok dengan parts "tests".
         excl.update(e.rstrip("/").rstrip("\\") for e in exclude)
 
-    py_files = _discover(root, excl)
-    if not py_files:
-        typer.echo(f"  ✗ No .py files found in {path}")
+    files = _discover(root, excl)
+    if not files:
+        typer.echo(f"  ✗ No supported files found in {path}")
         raise typer.Exit(1)
 
     # Scan + build.
-    results = [safe_parse(p) for p in py_files]
+    results = [r for r in (_parse_file(p, root) for p in files) if r is not None]
     graph = build_graph(results, root=root)
 
     meta = graph.get("meta", {})
@@ -253,7 +294,7 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as td:
         r = runner.invoke(app, [td, "--no-browser"])
         assert r.exit_code != 0, (r.exit_code, r.output)
-        assert "No .py files" in r.output, r.output
+        assert "No supported files" in r.output, r.output
 
     # 5. PATH tidak ada → exit code != 0.
     r = runner.invoke(app, ["/path/yang/pasti/tidak/ada/xyz123", "--no-browser"])

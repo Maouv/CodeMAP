@@ -1,4 +1,10 @@
-"""Static risk flags — Layer 1 (BLUEPRINT Section 9). Phase 1: star_import only."""
+"""Static risk flags — Layer 1 (BLUEPRINT Section 9).
+
+Phase 4: language-aware. ``star_import`` is universal (wildcard import exists
+in Python, JS/TS, Go). Python-specific checks (none_return, uncaught_exception,
+type_annotation, circular_import) are Phase 4 extensions — guard with
+``result.language == "python"`` when added.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +12,10 @@ from .ast_parser import ParseResult
 
 
 def analyze_risks(result: ParseResult, all_results: list[ParseResult]) -> list[dict[str, object]]:
-    """Return risk dicts for `result`. Phase 1 implements only star_import (§9)."""
+    """Return risk dicts for `result`. Language-aware via ``result.language``.
+
+    Phase 1 implements only star_import (§9) — universal across languages.
+    """
     risks: list[dict[str, object]] = []
     for imp in result.imports:
         if imp.is_star:

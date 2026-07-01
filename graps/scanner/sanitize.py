@@ -55,6 +55,8 @@ def sanitize_constant_value(name: str, value: str) -> str:
         '[REDACTED]'
         >>> sanitize_constant_value("API_URL", "sk-ant-abc123xyz4567890abcdef")
         '[REDACTED]'
+        # ponytail: name-based detection catches this (name has "webhook_secret").
+        # Value regex requires whsec_ + 32+ chars; short values escape value detection.
         >>> sanitize_constant_value("WEBHOOK_SECRET", "whsec_abc123")
         '[REDACTED]'
     """

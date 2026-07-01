@@ -10,11 +10,22 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from graps.scanner import ParsedFile
+from graps.scanner import ParsedFile, ParsedImport
 
 from .resolver import resolve_import
 from .risk_analyzer import analyze_risks
 from .sanitize import sanitize_constant_value
+
+# ponytail: memoize resolve_import per build_graph call; O(k) → 2× O(k) fs I/O.
+# Cache keyed by (target, is_dynamic, is_star, current_file, root) — ParsedImport
+# isn't hashable (dataclass default), so we extract fields.
+_resolve_cache: dict[tuple[str, bool, bool, Path, Path], Path | None] = {}
+
+def _resolved(imp: ParsedImport, current_file: Path, root: Path) -> Path | None:
+    key = (imp.target, imp.is_dynamic, imp.is_star, current_file, root)
+    if key not in _resolve_cache:
+        _resolve_cache[key] = resolve_import(imp, current_file, root)
+    return _resolve_cache[key]
 
 
 def _rel(path: Path, root: Path) -> str:
@@ -76,7 +87,7 @@ def _build_node(result: ParsedFile, all_results: list[ParsedFile], root: Path) -
     imports = [{
         "from": imp.target,
         "resolved_path": (lambda r: _rel(r, root) if r else None)(
-            resolve_import(imp, result.path, root)),
+            _resolved(imp, result.path, root)),
         "is_dynamic": imp.is_dynamic,
         "is_star": imp.is_star,
         "is_conditional": imp.is_conditional,
@@ -107,7 +118,7 @@ def _build_edges(results: list[ParsedFile], root: Path) -> list[dict[str, Any]]:
         for imp in result.imports:
             if imp.is_dynamic or imp.is_star:
                 continue
-            target = resolve_import(imp, result.path, root)
+            target = _resolved(imp, result.path, root)
             if target is None:  # stdlib / 3rd-party / unresolved
                 continue
             tgt = _rel(target, root)

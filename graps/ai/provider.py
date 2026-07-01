@@ -264,10 +264,12 @@ def _parse_summary(text: str) -> dict[str, object]:
         raise AIError("parse_failed")
     # ponytail: tidak validasi tipe per-field. Kalau model balas integer untuk
     # `role`, caller masih dapat dict — tambahkan validasi kalau ada bug nyata.
+    # ponytail: ``or ""`` guards both missing key AND explicit JSON null;
+    # ``.get(k, "")`` only catches missing key.
     return {
-        "role": data.get("role", ""),
-        "importance": data.get("importance", ""),
-        "hidden_assumption": data.get("hidden_assumption", ""),
+        "role": data.get("role") or "",
+        "importance": data.get("importance") or "",
+        "hidden_assumption": data.get("hidden_assumption") or "",
     }
 
 

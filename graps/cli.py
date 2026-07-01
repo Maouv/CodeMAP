@@ -9,6 +9,7 @@ ponytail: tidak pakai Rich/Click/colorama. typer.echo + print biasa cukup.
 
 from __future__ import annotations
 
+import errno
 import os
 import socket
 import tempfile
@@ -87,7 +88,10 @@ def _warn_if_cache_not_ignored(root: Path) -> None:
     """
     gitignore = root / ".gitignore"
     if gitignore.exists():
-        content = gitignore.read_text()
+        try:
+            content = gitignore.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return  # unreadable → skip warning silently
         if ".graps" not in content and ".graps/" not in content:
             typer.echo(
                 "  ⚠ .graps/ belum ada di .gitignore — "
@@ -209,6 +213,11 @@ def main(
         typer.echo("")
         typer.echo("  Stopped.")
         raise typer.Exit(0)
+    except OSError as e:
+        if e.errno == errno.EADDRINUSE:
+            typer.echo(f"  ✗ Port {port} already in use. Try: graps . --port {port + 1}")
+            raise typer.Exit(1)
+        raise
 
 
 if __name__ == "__main__":

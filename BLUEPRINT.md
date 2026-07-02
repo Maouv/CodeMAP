@@ -303,6 +303,11 @@ Kontrak antara Python scanner dan D3 frontend. **Jangan ubah shape ini tanpa upd
 
 **Security note:** `constants[].value` di-sanitize sebelum masuk JSON — lihat Section 11 (Security).
 
+> **Phase 5 (deprecated):** field `ai_summary` per function dipertahankan untuk
+> backward-compat (`null`), tapi **tidak dipakai** lagi. AI insight sekarang
+> via chat (`POST /api/ai/chat`) yang stateless — tidak di-persist ke graph.
+> Hapus field ini kalau graph schema benar-benar di-break di phase depan.
+
 ```json
 {
   "meta": {
@@ -506,13 +511,25 @@ Font: **Sora** (UI) + **JetBrains Mono** (code/paths). Canvas renderer pakai `--
 - Calls list
 - Decorators
 - Risk flags (cards dengan severity color)
-- `[✦ Generate AI Insight]` — disabled kalau no API key
+- `[✦ Ask AI]` — insert `@file::function` ke chat input + focus (Phase 5).
+  Disabled kalau no API key / SDK not installed. Tidak generate langsung —
+  user ketik pertanyaan sendiri.
 
-### Level 3 — AI Insight
+### Level 3 — AI Chat (Phase 5 — Option C)
 
-- Loading: spinner + "Analyzing..."
-- Result: structured card (Role / Importance / Hidden assumption)
-- Cached — invalidate kalau file modified
+- Chat interface (bukan tombol insight per-fungsi) di side panel, collapsible.
+- Input bar dengan `@tag` parsing (aider-style): `@file`, `@function`,
+  `@file::function`.
+- Tag-time **non-blocking warning** (amber, dismissible): cek
+  `node.constants` ada `[REDACTED]` (C-01) → "File ini mungkin contain
+  sensitive values yang akan di-share ke AI provider." Tidak halt send.
+- `POST /api/ai/chat { message, tagged, history }` → `{ reply, warnings }`
+  atau `{ enabled: false, reason }` / `{ error_type }`.
+- Reply rendered sebagai assistant bubble (raw text, apa adanya).
+- Warnings dari server (credential file excluded, file not in graph, dsb.)
+  tampil non-blocking inline di chat.
+- State in-memory, fresh session per load — no persistence, no localStorage.
+- Disabled state: no API key / SDK not installed → input greyed + hint tooltip.
 
 ### Graph Interaction
 
@@ -1184,10 +1201,15 @@ Jangan flag circular import kalau lazy import (import di dalam function body).
 
 ## 10. AI Layer Specification
 
+> **Phase 5 (Option C):** AI interaction diganti dari per-function 3-field
+> summary ke **stateless chat interface**. `scrub_secrets()` + consent modal
+> dihapus; ganti user responsibility + non-blocking warning. Lihat
+> `PHASE5.md` untuk rationale lengkap.
+
 ### When AI is called
 
 - **Never** saat initial scan
-- **Only** saat user explicitly klik `[Generate AI Insight]`
+- **Only** saat user kirim message di chat (`POST /api/ai/chat`)
 - Cache result, invalidate kalau `file_modified_at` berubah
 
 ### Cache structure
@@ -1215,28 +1237,42 @@ Jangan flag circular import kalau lazy import (import di dalam function body).
 }
 ```
 
-### Secret scrubbing sebelum kirim ke AI
+### Secret handling — Option C (Phase 5, menggantikan scrub_secrets)
+
+graps **tidak scrub otomatis** lagi. Context dikirim raw ke provider. Model
+secret handling:
+
+| Kategori file | AI context treatment |
+|---------------|----------------------|
+| `.env` / `*.pem` / `*.key` / `credentials.json` / `secrets.json` / `.env.*` | HARD EXCLUDE — source tidak dikirim, warning di chat |
+| Source dengan constant `[REDACTED]` (C-01 detect) | KIRIM RAW + non-blocking warning saat tag |
+| Source bersih | KIRIM RAW, no warning |
+
+Non-blocking warning di tag-time via `[REDACTED]` constants dari C-01
+(reuse `sanitize_constant_value()` output di graph). Ceiling: cuma catch
+constants, bukan secret di function body. User responsibility untuk review
+kode sendiri sebelum tag file berisi secret.
 
 ```python
-SENSITIVE_PATTERNS = [
-    r'(?i)(password|passwd|pwd)\s*=\s*["\']?.+',
-    r'(?i)(api_key|apikey|secret|token)\s*=\s*["\']?.+',
-    r'(?i)(auth|credential)\s*=\s*["\']?.+',
-]
-
-def scrub_secrets(source: str) -> str:
-    for pattern in SENSITIVE_PATTERNS:
-        source = re.sub(pattern, lambda m: m.group().split('=')[0] + '= "[REDACTED]"', source)
-    return source
+def build_ai_context(tagged, graph, scan_root, max_tokens=8000):
+    """Assemble context dari tagged items → (context_str, warnings)."""
+    # 1. resolve tag → graph node (metadata: callers, callees, risks, line range)
+    # 2. .env/credential → hard skip source, catat warning
+    # 3. baca source dari disk (function body kalau tag fungsi, file truncated kalau tag file)
+    # 4. token budget per item (len(text)//4 approx), truncate `... [truncated, N lines omitted]`
+    # 5. assemble: [Graph Context] + [Source Context]
 ```
 
-**User harus lihat consent notice** pertama kali AI dipanggil: *"File content akan dikirim ke [provider]. Pastikan tidak ada credentials hardcoded."*
+> **Deprecated (Phase 3):** `scrub_secrets()` + `detect-secrets` + consent
+> modal blocking — semua dihapus Phase 5. Cache (`cache.py`) tetap ada untuk
+> backward-compat `/api/ai/summary` (disabled), tidak dipakai chat.
 
 ### Provider abstraction
 
 ```python
 class AIProvider:
-    def generate_summary(self, file_content: str, function_context: dict) -> dict:
+    def chat(self, messages: list[dict[str, str]], context: str) -> str:
+        """Kirim conversation + context (system message), return raw text."""
         raise NotImplementedError
 
 class AnthropicProvider(AIProvider):
@@ -1252,6 +1288,10 @@ def get_provider() -> AIProvider | None:
         return OpenAIProvider()
     return None
 ```
+
+`provider.chat(messages, context)` — `context` dikirim raw sebagai system
+message (Anthropic) atau `{"role":"system",...}` (OpenAI). Return raw text
+reply (bukan dict 3-field). `provider.py` tidak tahu graph/tag/file path.
 
 **Jangan store API key sebagai instance attribute.** Baca dari env setiap call. Sanitize exception sebelum log — jangan log error message raw dari provider karena bisa berisi key fragment.
 
@@ -1416,7 +1456,7 @@ def resolve_safe(path: Path, depth: int = 0) -> Path | None:
 | ID | Severity | Finding | Status |
 |----|----------|---------|--------|
 | C-01 | CRITICAL | constants[].value expose credentials | → `sanitize_constant_value()` |
-| C-02 | CRITICAL | Source code ke AI tanpa scrubbing | → `scrub_secrets()` + consent |
+| C-02 | CRITICAL | Source code ke AI tanpa scrubbing | **revised (Phase 5): user-responsibility model** — Option C kirim raw + non-blocking warning + `.env`/credential hard-exclude. `scrub_secrets()` + consent dihapus |
 | H-01 | HIGH | Uvicorn bind 0.0.0.0 | → hardcode `127.0.0.1` |
 | H-02 | HIGH | Tidak ada CORS + Origin validation | → middleware Phase 1 |
 | H-03 | HIGH | Cache bisa ter-commit ke Git | → `.gitignore` + `chmod 600` |
@@ -1824,11 +1864,16 @@ jobs:
 
 ### Phase 3 — AI Layer (1 minggu)
 
+> **Phase 5 superseded:** Task 1 (scrub_secrets upgrade) + Task 2 (consent)
+> dihapus — Option C kirim raw + non-blocking warning menggantikan keduanya.
+> Task 3 (cache permission) + Task 4 (SECURITY.md) tetap relevan (cache
+> deprecated, SECURITY.md di-rewrite Phase 5).
+
 ```
-[ ] Provider abstraction (Anthropic + OpenAI)
-[ ] scrub_secrets() sebelum kirim ke AI
-[ ] Consent notice pertama kali AI dipanggil
-[ ] Cache read/write + invalidation + chmod 600
+[ ] Provider abstraction (Anthropic + OpenAI) — DIPAKAI oleh chat
+[x] scrub_secrets() sebelum kirim ke AI — SUPERSEDED Phase 5 (dihapus)
+[ ] Consent notice pertama kali AI dipanggil — SUPERSEDED Phase 5 (non-blocking warning)
+[ ] Cache read/write + invalidation + chmod 600 — deprecated (chat stateless)
 [ ] .gitignore check untuk .graps/ pada startup
 [ ] POST /api/ai/summary endpoint
 [ ] [Generate AI Insight] button
@@ -1886,6 +1931,13 @@ jobs:
 ✗ Go, Rust support — Phase 4b kalau ada demand
 ```
 
+**Post-MVP backlog (Phase 5+):**
+
+- **Approval/consent mode toggle** (ala Cline auto-approval vs manual) —
+  design toggle tanpa data usage = tebakan. Masuk setelah chat stabil + ada
+  usage data. Non-blocking warning (Phase 5) sudah cover informed-consent
+  case untuk MVP.
+
 ---
 
 ## 17. Development Bootstrap
@@ -1925,9 +1977,10 @@ Lewat Hari 3 belum progress → scope down D3, fokus ke scanner dulu.
 | Frontend state: shared object + EventTarget | Simple, no deps, no build step | 2026-06-28 |
 | ast module MVP, tree-sitter Phase 4 | Multi-language prerequisite untuk launch, tapi refactor setelah BaseParser interface ada | 2026-06-28 |
 | BaseParser Protocol interface wajib di Phase 3 | Isolate scanner layer agar Phase 4 tree-sitter migration tidak cascade ke graph_builder/server/frontend | 2026-06-28 |
+| Option C — send full source, remove scrub_secrets, user responsibility + non-blocking warning | Vibe coder debugging use case: metadata saja tidak cukup answer "kenapa bug ini terjadi"; scrub otomatis false sense of security (multi-line/dict leak). Informed warning + user responsibility = model jujur, align stance Claude Code | 2026-07-02 |
 
 ---
 
 *BLUEPRINT.md — Living document. Update setiap kali ada keputusan arsitektur baru.*  
-*Last updated: 2026-06-28*
+*Last updated: 2026-07-02*
 

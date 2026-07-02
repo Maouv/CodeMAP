@@ -25,6 +25,9 @@
   const chatHistory = [];    // [{role: 'user'|'assistant', content}]
   const chatWarnings = [];   // non-blocking warnings current message [{file, reason}]
   let chatSending = false;   // guard double-send
+  let chatDisabled = false;  // ponytail: persisten saat no_api_key/sdk_not_installed.
+  //   Ceiling: no boot-time probe — disabled state baru muncul setelah send
+  //   pertama. Upgrade path: GET /api/ai/status kalau perlu greyed sejak boot.
   let chatInput, chatSend, chatMsgEl, chatWarnEl;
 
   function esc(s) {
@@ -390,7 +393,7 @@
   }
 
   async function handleSend() {
-    if (!chatInput || chatSending) return;
+    if (!chatInput || chatSending || chatDisabled) return;
     const raw = chatInput.value;
     const parsed = parseTags(raw);
     if (!parsed.cleanText.trim()) return;       // butuh pertanyaan, tag saja tidak cukup
@@ -422,6 +425,14 @@
           : "No API key configured";
         chatHistory.push({ role: "system", content: reason });
         if (data.warnings && data.warnings.length) chatWarnings.push.apply(chatWarnings, data.warnings);
+        // ponytail: disable persisten + hint tooltip (spec §4.5).
+        //   empty_message transien (caught client-side) → tidak disable.
+        if (data.reason === "no_api_key" || data.reason === "sdk_not_installed") {
+          chatDisabled = true;
+          chatInput.disabled = true;
+          chatSend.disabled = true;
+          chatInput.title = reason;
+        }
       } else if (data.error_type) {
         if (toast) toast(errorMsg(data), "error");
         chatHistory.push({ role: "error", content: errorMsg(data) });
@@ -437,7 +448,8 @@
       renderChat();
     } finally {
       chatSending = false;
-      chatSend.disabled = false;
+      chatSend.disabled = chatDisabled;
+      chatInput.disabled = chatDisabled;
     }
   }
 
@@ -454,6 +466,15 @@
         handleSend();
       }
     });
+    // ponytail: collapse toggle — toggle class, CSS hide children. aria sinkron.
+    const collapse = document.getElementById("chat-collapse");
+    const section = document.getElementById("chat-section");
+    if (collapse && section) {
+      collapse.addEventListener("click", () => {
+        const collapsed = section.classList.toggle("collapsed");
+        collapse.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      });
+    }
     renderChat();
   }
 

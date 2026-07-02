@@ -561,6 +561,38 @@ button { font-family: inherit; }
   background: var(--bg-surface);
   max-height: 280px;
 }
+/* ponytail: collapse = toggle class, CSS hide children. Ceiling: state tidak
+ *   persist (no localStorage) — sesuai chat stateless by design. */
+.chat-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px var(--space-4);
+  border-bottom: 1px solid var(--bg-border);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-secondary);
+}
+.chat-header-title { display: inline-flex; align-items: center; gap: 5px; }
+.chat-collapse {
+  background: none;
+  border: none;
+  color: var(--ink-muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 4px;
+  line-height: 1;
+  transition: transform 150ms ease-out;
+}
+.chat-collapse:hover { color: var(--ink-primary); }
+.chat-section.collapsed .chat-collapse { transform: rotate(-90deg); }
+.chat-section.collapsed .chat-messages,
+.chat-section.collapsed .chat-warnings,
+.chat-section.collapsed .chat-input-bar { display: none; }
+.chat-section.collapsed { max-height: none; }
 .chat-messages {
   flex: 1 1 auto;
   min-height: 0;

@@ -1,9 +1,15 @@
-/* graps — side panel: render file detail, function accordion, AI insight.
+/* graps — side panel: render file detail, function accordion, + AI chat (Phase 5).
  *
- * Listen store.change → kalau selectedNode berubah, render panel content.
+ * Listen store.change → kalau selectedNode berubah, render panel content ke
+ * #panel-scroll. Chat section (#chat-section) adalah sibling yang di-wire
+ * sekali saat boot — tidak di-overwrite oleh render.
  *
- * ponytail: render via template literal + innerHTML. Tidak ada virtual DOM,
- * tidak ada template engine. Re-render seluruh panel saat selection ganti.
+ * Phase 5: hapus callAI/showConsentModal/aiResults/_aiConsentGiven/aiSection.
+ * Ganti dengan chat interface (Option C): @tag parsing, tag-time non-blocking
+ * warning (cek [REDACTED] constants dari C-01), POST /api/ai/chat.
+ *
+ * ponytail: render via template literal + innerHTML. Chat state in-memory
+ * (fresh session, no localStorage). Re-use errorMsg() dari lama buat error map.
  */
 (function () {
   "use strict";
@@ -14,8 +20,12 @@
 
   let panelEl, scrollEl;
   const expandedFns = new Set(); // names yang sedang expand
-  const aiResults = new Map();   // key "file::function" → response payload
-  let _aiConsentGiven = false;   // PHASE3 Task 2: in-memory, reset tiap server restart (no localStorage)
+
+  // Chat state — in-memory, reset tiap page load (no localStorage, no persistence).
+  const chatHistory = [];    // [{role: 'user'|'assistant', content}]
+  const chatWarnings = [];   // non-blocking warnings current message [{file, reason}]
+  let chatSending = false;   // guard double-send
+  let chatInput, chatSend, chatMsgEl, chatWarnEl;
 
   function esc(s) {
     return String(s == null ? "" : s)
@@ -62,8 +72,6 @@
     const lineRange = (fn.line_start != null)
       ? (fn.line_start + (fn.line_end != null ? " – " + fn.line_end : ""))
       : "—";
-    const aiKey = currentNode().path + "::" + fn.name;
-    const ai = aiResults.get(aiKey);
 
     return (
       '<div class="fn-detail" data-fn-detail="' + esc(fn.name) + '">' +
@@ -103,7 +111,11 @@
             risks.map(riskCard).join("")
           : "") +
 
-        aiSection(fn, ai) +
+        // ponytail: per-function AI insight → affordance yang insert @tag ke chat.
+        // Tidak generate langsung — user ketik pertanyaan mereka sendiri.
+        '<button class="btn-ai" data-ai-fn="' + esc(fn.name) + '">' +
+          '<span class="icon">✦</span> Ask AI' +
+        "</button>" +
       "</div>"
     );
   }
@@ -122,60 +134,21 @@
     );
   }
 
-  function aiSection(fn, ai) {
-    if (!ai) {
-      return '<button class="btn-ai" data-ai-fn="' + esc(fn.name) + '">' +
-        '<span class="icon">✦</span> Generate AI Insight' +
-        "</button>";
-    }
-    if (ai.loading) {
-      return '<button class="btn-ai" disabled>' +
-        '<span class="icon">✦</span> Analyzing…' +
-        "</button>";
-    }
-    if (ai.enabled === false) {
-      const msg = ai.reason === "sdk_not_installed"
-        ? "AI SDK not installed"
-        : "No API key configured";
-      return '<button class="btn-ai" disabled title="' + esc(msg) + '">' +
-        '<span class="icon">✦</span> ' + esc(msg) +
-        "</button>";
-    }
-    if (ai.error_type) {
-      return '<button class="btn-ai" data-ai-fn="' + esc(fn.name) + '">' +
-        '<span class="icon">✦</span> Retry AI Insight' +
-        "</button>";
-    }
-    const s = ai.summary || {};
-    return (
-      '<div class="ai-card">' +
-        '<div class="ai-card-header">' +
-          '<div class="ai-card-title">AI INSIGHT</div>' +
-          '<div class="ai-card-provider">' + esc(ai.provider || "") +
-          (ai.cached ? " · cached" : "") + "</div>" +
-        "</div>" +
-        aiField("Role", s.role) +
-        aiField("Importance", s.importance) +
-        aiField("Hidden assumption", s.hidden_assumption) +
-      "</div>"
-    );
-  }
-
-  function aiField(label, value) {
-    if (!value) return "";
-    return '<div class="ai-field">' +
-      '<div class="ai-field-label">' + esc(label) + "</div>" +
-      '<div class="ai-field-value">' + esc(value) + "</div>" +
-      "</div>";
-  }
-
   function currentNode() {
     return store.state.selectedNode;
   }
 
+  // ponytail: lookup node by path/id dari graph yang sudah di-load. Dipakai
+  // checkTagWarnings + parseTags (resolve bare @function ke file path).
+  function findNodeByPath(rel) {
+    const g = store.state.graph;
+    if (!g || !g.nodes) return null;
+    return (g.nodes || []).find((n) => n.path === rel || n.id === rel) || null;
+  }
+
   function render() {
     const node = currentNode();
-    if (!panelEl) return;
+    if (!panelEl || !scrollEl) return;
     if (!node) {
       panelEl.classList.remove("open");
       panelEl.setAttribute("aria-hidden", "true");
@@ -198,46 +171,44 @@
     });
 
     const html =
-      '<div class="panel-scroll">' +
-        '<div class="panel-header">' +
-          '<button class="panel-close" id="panel-close" aria-label="Close panel">×</button>' +
-          '<div class="panel-filename">' + esc(basename(node.path || node.id)) + "</div>" +
-          '<div class="panel-filepath">' + esc(node.path || node.id) + "</div>" +
-          '<div class="badge-row">' +
-            (high ? '<span class="badge badge--high">' + high + " high</span>" : "") +
-            (medium ? '<span class="badge badge--medium">' + medium + " medium</span>" : "") +
-            '<span class="badge badge--count">' + fns.length + " functions</span>" +
-          "</div>" +
+      '<div class="panel-header">' +
+        '<button class="panel-close" id="panel-close" aria-label="Close panel">×</button>' +
+        '<div class="panel-filename">' + esc(basename(node.path || node.id)) + "</div>" +
+        '<div class="panel-filepath">' + esc(node.path || node.id) + "</div>" +
+        '<div class="badge-row">' +
+          (high ? '<span class="badge badge--high">' + high + " high</span>" : "") +
+          (medium ? '<span class="badge badge--medium">' + medium + " medium</span>" : "") +
+          '<span class="badge badge--count">' + fns.length + " functions</span>" +
         "</div>" +
+      "</div>" +
 
-        '<div class="section-header">Functions <span class="section-count">' + fns.length + "</span></div>" +
-        (fns.length ? fns.map(fnRow).join("")
-          : '<div class="fn-row" style="cursor:default;color:var(--ink-muted)">No functions</div>') +
+      '<div class="section-header">Functions <span class="section-count">' + fns.length + "</span></div>" +
+      (fns.length ? fns.map(fnRow).join("")
+        : '<div class="fn-row" style="cursor:default;color:var(--ink-muted)">No functions</div>') +
 
-        (consts.length ? (
-          '<div class="section-header">Constants <span class="section-count">' + consts.length + "</span></div>" +
-          consts.map((c) =>
-            '<div class="fn-row" style="cursor:default">' +
-              '<span class="fn-name">' + esc(c.name) + "</span>" +
-              '<span class="fn-return">' + esc(c.value) + "</span>" +
-            "</div>"
-          ).join("")
-        ) : "") +
+      (consts.length ? (
+        '<div class="section-header">Constants <span class="section-count">' + consts.length + "</span></div>" +
+        consts.map((c) =>
+          '<div class="fn-row" style="cursor:default">' +
+            '<span class="fn-name">' + esc(c.name) + "</span>" +
+            '<span class="fn-return">' + esc(c.value) + "</span>" +
+          "</div>"
+        ).join("")
+      ) : "") +
 
-        (imps.length ? (
-          '<div class="section-header">Imports <span class="section-count">' + imps.length + "</span></div>" +
-          imps.map((i) => {
-            const names = (i.names || []).join(", ");
-            return '<div class="fn-row" data-pan-to="' + esc(i.resolved_path || "") + '"' +
-              (i.resolved_path ? "" : ' style="cursor:default"') + ">" +
-              '<span class="fn-name">' + esc(i.from || "") + "</span>" +
-              '<span class="fn-return">' + esc(names) + "</span>" +
-              "</div>";
-          }).join("")
-        ) : "") +
-      "</div>";
+      (imps.length ? (
+        '<div class="section-header">Imports <span class="section-count">' + imps.length + "</span></div>" +
+        imps.map((i) => {
+          const names = (i.names || []).join(", ");
+          return '<div class="fn-row" data-pan-to="' + esc(i.resolved_path || "") + '"' +
+            (i.resolved_path ? "" : ' style="cursor:default"') + ">" +
+            '<span class="fn-name">' + esc(i.from || "") + "</span>" +
+            '<span class="fn-return">' + esc(names) + "</span>" +
+            "</div>";
+        }).join("")
+      ) : "");
 
-    panelEl.innerHTML = html;
+    scrollEl.innerHTML = html;   // ponytail: render ke #panel-scroll, chat section utuh
     wireEvents();
   }
 
@@ -245,9 +216,10 @@
     const close = document.getElementById("panel-close");
     if (close) close.addEventListener("click", () => setState({ selectedNode: null }));
 
-    panelEl.querySelectorAll(".fn-row[data-fn]").forEach((row) => {
+    scrollEl.querySelectorAll(".fn-row[data-fn]").forEach((row) => {
       row.addEventListener("click", (ev) => {
         if (ev.target.closest("[data-pan-to]")) return;
+        if (ev.target.closest(".btn-ai")) return;     // jangan toggle row saat klik Ask AI
         const name = row.dataset.fn;
         if (expandedFns.has(name)) expandedFns.delete(name);
         else expandedFns.add(name);
@@ -255,7 +227,7 @@
       });
     });
 
-    panelEl.querySelectorAll("[data-pan-to]").forEach((el) => {
+    scrollEl.querySelectorAll("[data-pan-to]").forEach((el) => {
       el.addEventListener("click", (ev) => {
         ev.stopPropagation();
         const target = el.dataset.panTo;
@@ -265,100 +237,146 @@
       });
     });
 
-    panelEl.querySelectorAll("[data-ai-fn]").forEach((btn) => {
-      btn.addEventListener("click", () => callAI(btn.dataset.aiFn));
-    });
-  }
-
-    // PHASE3 Task 2 / BLUEPRINT §10: consent gate sebelum AI pertama kali dipanggil.
-  // ponytail: modal dibangun dinamis (pola toast.js), di-remove saat resolve. In-memory
-  // flag 1 per sesi browser; reset otomatis tiap server restart (refresh page saja tidak
-  // reset, tapi itu OK — sesi = lifetime halaman).
-  function showConsentModal() {
-    return new Promise((resolve) => {
-      const overlay = document.createElement("div");
-      overlay.className = "consent-overlay";
-      overlay.setAttribute("role", "dialog");
-      overlay.setAttribute("aria-modal", "true");
-      overlay.setAttribute("aria-label", "Kirim ke AI consent");
-      overlay.innerHTML =
-        '<div class="consent-box">' +
-          '<div class="consent-title">Kirim ke AI?</div>' +
-          '<div class="consent-body">File content akan dikirim ke ' +
-          "Anthropic/OpenAI untuk dianalisis. " +
-          "Pastikan tidak ada credentials hardcoded.</div>" +
-          '<div class="consent-actions">' +
-            '<button class="consent-btn consent-btn--cancel" type="button">Batal</button>' +
-            '<button class="consent-btn consent-btn--ok" type="button">Lanjutkan</button>' +
-          "</div>" +
-        "</div>";
-      document.body.appendChild(overlay);
-
-      function done(ok) {
-        overlay.remove();
-        document.removeEventListener("keydown", onKey);
-        resolve(ok);
-      }
-      function onKey(e) {
-        if (e.key === "Escape") done(false);
-        else if (e.key === "Enter") done(true);
-      }
-      overlay.querySelector(".consent-btn--ok").addEventListener("click", () => done(true));
-      overlay.querySelector(".consent-btn--cancel").addEventListener("click", () => done(false));
-      overlay.addEventListener("click", (e) => { if (e.target === overlay) done(false); });
-      document.addEventListener("keydown", onKey);
-      overlay.querySelector(".consent-btn--ok").focus();
-    });
-  }
-
-  async function callAI(fnName) {
-    const node = currentNode();
-    if (!node) return;
-    const fn = (node.functions || []).find((f) => f.name === fnName);
-    if (!fn) return;
-    if (!_aiConsentGiven) {
-      const ok = await showConsentModal();
-      if (!ok) return;            // Batal → tombol balik idle (loading state belum di-set)
-      _aiConsentGiven = true;
-    }
-    const key = node.path + "::" + fnName;
-    aiResults.set(key, { loading: true });
-    render();
-
-    const body = {
-      file: node.path || node.id,
-      function: fnName,
-      line: fn.line_start || 0,
-      modified_at: node.file_modified_at || "",
-      // ponytail: parser belum ekstrak source raw — kirim "". Server menolak
-      // dengan reason "no_source" sampai source extraction di-wire (Finding 7).
-      source: "",
-    };
-
-    try {
-      const r = await fetch("/api/ai/summary", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+    // ✦ Ask AI — insert @file::function ke chat input + focus (tidak generate).
+    scrollEl.querySelectorAll("[data-ai-fn]").forEach((btn) => {
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        askAI(btn.dataset.aiFn);
       });
-      const data = await r.json();
-      aiResults.set(key, data);
-      if (data.enabled === false) {
-        // tampil disabled state, no toast — itu config issue, bukan error sesi.
-      } else if (data.error_type) {
-        const m = errorMsg(data);
-        if (toast) toast(m, "error");
-      } else if (data.cached) {
-        if (toast) toast("Loaded from cache", "info");
-      }
-      render();
-    } catch (err) {
-      aiResults.set(key, { enabled: true, error_type: "network" });
-      if (toast) toast("AI request failed: " + err.message, "error");
-      render();
-    }
+    });
   }
 
+  // ============================================================
+  // === CHAT (Phase 5 — Option C) =============================
+  // ============================================================
+
+  /**
+   * Insert @file::function ke chat input + focus. User ketik pertanyaan sendiri.
+   */
+  function askAI(fnName) {
+    const node = currentNode();
+    if (!node || !chatInput) return;
+    const tag = "@" + (node.path || node.id) + "::" + fnName;
+    chatInput.value = chatInput.value
+      ? (chatInput.value.replace(/\s+$/, "") + " " + tag)
+      : tag;
+    chatInput.focus();
+  }
+
+  /**
+   * Parse @tag dari input. Format: @file::function | @file | @function.
+   * ponytail: bare @function di-resolve ke path node pertama yang punya fungsi
+   *   itu — ceiling: ambigu kalau function name duplikat cross-file, ambil yang
+   *   pertama. Upgrade path: autocomplete dropdown kalau perlu.
+   * @returns {{tags: string[], cleanText: string}} tags = ["file.py", "file.py::fn", ...]
+   */
+  function parseTags(text) {
+    const tags = [];
+    // @path::function  atau  @path  atau  @bareword
+    const re = /@(\S+)/g;
+    let m;
+    let stripped = text;
+    while ((m = re.exec(text)) !== null) {
+      const raw = m[1];
+      stripped = stripped.replace("@" + raw, "");
+      if (raw.indexOf("::") !== -1) {
+        tags.push(raw);
+      } else {
+        // path or bare function name. Kalau ada node dgn path == raw → file tag.
+        // Kalau bukan path yang dikenal, coba resolve sebagai function name.
+        const node = findNodeByPath(raw);
+        if (node) {
+          tags.push(node.path || node.id);
+        } else {
+          const fnOwner = findNodeByFunction(raw);
+          if (fnOwner) tags.push((fnOwner.path || fnOwner.id) + "::" + raw);
+          else tags.push(raw); // biarkan server yang kasih warning file_not_in_graph
+        }
+      }
+    }
+    return { tags: tags, cleanText: stripped.replace(/\s+/g, " ").trim() };
+  }
+
+  // ponytail: cari node pertama yang punya fungsi dgn name == fnName.
+  function findNodeByFunction(fnName) {
+    const g = store.state.graph;
+    if (!g || !g.nodes) return null;
+    return (g.nodes || []).find((n) =>
+      (n.functions || []).some((f) => f.name === fnName)
+    ) || null;
+  }
+
+  /**
+   * Tag-time non-blocking warning: cek node.constants ada yang [REDACTED] (C-01).
+   * ponytail: ceiling = cuma catch constants, bukan secret di function body.
+   *   Reuse data graph yang sudah di-load — zero fetch. Tidak halt send.
+   */
+  function checkTagWarnings(tags) {
+    const added = [];
+    tags.forEach((tag) => {
+      const rel = tag.indexOf("::") !== -1 ? tag.split("::", 1)[0] : tag;
+      const node = findNodeByPath(rel);
+      if (!node) return;
+      const consts = node.constants || [];
+      const hasRedacted = consts.some((c) => String(c.value) === "[REDACTED]");
+      if (!hasRedacted) return;
+      // dedup per file
+      if (chatWarnings.some((w) => w.file === rel && w.reason === "redacted_constants")) return;
+      const w = { file: rel, reason: "redacted_constants" };
+      chatWarnings.push(w);
+      added.push(w);
+    });
+    if (added.length) renderChat();
+  }
+
+  function warningText(w) {
+    if (w.reason === "redacted_constants")
+      return esc(w.file) + " mungkin contain sensitive values (constant [REDACTED]) yang akan di-share ke AI provider.";
+    if (w.reason === "credential_file_excluded")
+      return esc(w.file || "") + " adalah credential file — source di-exclude dari AI context.";
+    if (w.reason === "file_not_in_graph")
+      return esc(w.file || "") + " tidak ada di graph — context terbatas.";
+    if (w.reason === "function_not_found")
+      return "Fungsi tidak ditemukan di " + esc(w.file || "") + ".";
+    if (w.reason === "source_unreadable")
+      return esc(w.file || "") + " source tidak bisa dibaca.";
+    return esc(w.reason || "warning");
+  }
+
+  function renderChat() {
+    if (!chatMsgEl || !chatWarnEl) return;
+    // messages
+    if (!chatHistory.length) {
+      chatMsgEl.innerHTML =
+        '<div class="chat-bubble chat-bubble--system">No messages yet. Ask AI about @file or @function.</div>';
+    } else {
+      chatMsgEl.innerHTML = chatHistory.map((m) => {
+        const cls = m.role === "user" ? "chat-bubble--user"
+          : m.role === "assistant" ? "chat-bubble--assistant"
+          : m.role === "error" ? "chat-bubble--error"
+          : "chat-bubble--system";
+        return '<div class="chat-bubble ' + cls + '">' + esc(m.content) + "</div>";
+      }).join("");
+      // auto-scroll ke bawah
+      chatMsgEl.scrollTop = chatMsgEl.scrollHeight;
+    }
+    // warnings — non-blocking, dismissible
+    chatWarnEl.innerHTML = chatWarnings.map((w, i) =>
+      '<div class="chat-warning" data-warn-idx="' + i + '">' +
+        '<span class="chat-warning-icon">⚠</span>' +
+        '<span class="chat-warning-msg">' + warningText(w) + "</span>" +
+        '<button class="chat-warning-dismiss" type="button" aria-label="Dismiss" data-warn-dismiss="' + i + '">×</button>' +
+      "</div>"
+    ).join("");
+    chatWarnEl.querySelectorAll("[data-warn-dismiss]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        chatWarnings.splice(Number(btn.dataset.warnDismiss), 1);
+        renderChat();
+      });
+    });
+  }
+
+  // Reuse dari lama: map error_type ke toast message.
   function errorMsg(data) {
     switch (data.error_type) {
       case "auth_failed": return "API auth failed";
@@ -371,8 +389,77 @@
     }
   }
 
+  async function handleSend() {
+    if (!chatInput || chatSending) return;
+    const raw = chatInput.value;
+    const parsed = parseTags(raw);
+    if (!parsed.cleanText.trim()) return;       // butuh pertanyaan, tag saja tidak cukup
+
+    checkTagWarnings(parsed.tags);              // non-blocking, tidak halt send
+
+    chatSending = true;
+    chatInput.value = "";
+    chatSend.disabled = true;
+    chatHistory.push({ role: "user", content: raw.trim() });
+    renderChat();
+
+    const body = {
+      message: parsed.cleanText,
+      tagged: parsed.tags,
+      history: chatHistory.slice(0, -1),        // exclude user msg baru (di-append server)
+    };
+    try {
+      const r = await fetch("/api/ai/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await r.json();
+      if (data.enabled === false) {
+        // no_api_key / sdk_not_installed / empty_message → system bubble, no toast
+        const reason = data.reason === "sdk_not_installed" ? "AI SDK not installed"
+          : data.reason === "empty_message" ? "Message is empty"
+          : "No API key configured";
+        chatHistory.push({ role: "system", content: reason });
+        if (data.warnings && data.warnings.length) chatWarnings.push.apply(chatWarnings, data.warnings);
+      } else if (data.error_type) {
+        if (toast) toast(errorMsg(data), "error");
+        chatHistory.push({ role: "error", content: errorMsg(data) });
+        if (data.warnings && data.warnings.length) chatWarnings.push.apply(chatWarnings, data.warnings);
+      } else {
+        chatHistory.push({ role: "assistant", content: data.reply || "" });
+        if (data.warnings && data.warnings.length) chatWarnings.push.apply(chatWarnings, data.warnings);
+      }
+      renderChat();
+    } catch (err) {
+      if (toast) toast("AI request failed: " + err.message, "error");
+      chatHistory.push({ role: "error", content: "Network error: " + err.message });
+      renderChat();
+    } finally {
+      chatSending = false;
+      chatSend.disabled = false;
+    }
+  }
+
+  function wireChat() {
+    chatInput = document.getElementById("chat-input");
+    chatSend = document.getElementById("chat-send");
+    chatMsgEl = document.getElementById("chat-messages");
+    chatWarnEl = document.getElementById("chat-warnings");
+    if (!chatInput || !chatSend) return;
+    chatSend.addEventListener("click", handleSend);
+    chatInput.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" && !ev.shiftKey) {
+        ev.preventDefault();
+        handleSend();
+      }
+    });
+    renderChat();
+  }
+
   function boot() {
     panelEl = document.getElementById("side-panel");
+    scrollEl = document.getElementById("panel-scroll");
     if (!panelEl) return;
     store.addEventListener("change", (e) => {
       if (e.detail.keys.includes("selectedNode")) {
@@ -380,6 +467,7 @@
         render();
       }
     });
+    wireChat();   // wire chat sekali — section sibling, tidak di-overwrite render
   }
 
   if (document.readyState === "loading") {

@@ -71,7 +71,21 @@
     </div>
 
     <aside id="side-panel" class="side-panel" role="complementary"
-      aria-label="File detail" aria-hidden="true"></aside>
+      aria-label="File detail" aria-hidden="true">
+      <!-- ponytail: panel.js render ke #panel-scroll (innerHTML reset per selection).
+           Chat section sibling — tidak di-overwrite, di-wire sekali saat boot. -->
+      <div id="panel-scroll" class="panel-scroll"></div>
+      <section id="chat-section" class="chat-section" aria-label="AI chat">
+        <div id="chat-messages" class="chat-messages"></div>
+        <div id="chat-warnings" class="chat-warnings"></div>
+        <div class="chat-input-bar">
+          <input id="chat-input" class="chat-input" type="text"
+            placeholder="Ask AI…  @file @function" autocomplete="off"
+            aria-label="Ask AI" />
+          <button id="chat-send" class="chat-send" type="button" aria-label="Send">↑</button>
+        </div>
+      </section>
+    </aside>
   </main>
 
   <!-- SEARCH OVERLAY (Cmd+K) ---------------------------------- -->

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import signal
+import threading
 import tokenize
 from pathlib import Path
 
@@ -54,7 +55,7 @@ def safe_parse(path: Path) -> ParsedFile:
         return result
 
     # ponytail: signal.alarm is Unix-only; non-Unix runs without a timeout guard.
-    has_alarm = hasattr(signal, "SIGALRM")
+    has_alarm = hasattr(signal, "SIGALRM") and threading.current_thread() is threading.main_thread()
 
     def _timeout(signum: int, frame: object) -> None:
         raise TimeoutError

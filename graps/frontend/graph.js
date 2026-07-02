@@ -472,9 +472,9 @@
       }
     });
 
-    // Repaint saat state berubah (filter / selection).
+    // Repaint saat state berubah (filter / selection / hover).
     store.addEventListener("change", (e) => {
-      if (e.detail.keys.includes("filter") || e.detail.keys.includes("selectedNode")) {
+      if (e.detail.keys.includes("filter") || e.detail.keys.includes("selectedNode") || e.detail.keys.includes("hoveredNode")) {
         draw();
       }
     });

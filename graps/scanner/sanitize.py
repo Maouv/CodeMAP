@@ -36,7 +36,7 @@ SENSITIVE_VALUE_PATTERNS = [
 ]
 
 
-def sanitize_constant_value(name: str, value: str) -> str:
+def sanitize_constant_value(name: str, value: object) -> object:
     """
     Returns '[REDACTED]' if the constant name or value looks like a credential.
     Otherwise returns the original value unchanged.
@@ -66,9 +66,11 @@ def sanitize_constant_value(name: str, value: str) -> str:
     if any(keyword in name_lower for keyword in SENSITIVE_NAME_KEYWORDS):
         return "[REDACTED]"
 
-    # Check value-based patterns
-    for pattern in SENSITIVE_VALUE_PATTERNS:
-        if pattern.search(value):
-            return "[REDACTED]"
+    # Check value-based patterns — only on str values; non-str (int/bool/None)
+    # cannot hold a credential literal and re.search would raise TypeError (F5).
+    if isinstance(value, str):
+        for pattern in SENSITIVE_VALUE_PATTERNS:
+            if pattern.search(value):
+                return "[REDACTED]"
 
     return value

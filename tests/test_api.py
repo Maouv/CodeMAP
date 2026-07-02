@@ -132,6 +132,22 @@ def test_security__post_invalid_origin_403(simple_graph, tmp_path, ai_body):
     )
     assert r.status_code == 403
     assert r.json() == {"error": "Forbidden"}
+def test_security__post_origin_prefix_bypass_rejected_403(simple_graph, tmp_path, ai_body):
+    # CSRF guard must exact-match Origin, not startswith() (report-bug-server Finding 1).
+    # Each shares a prefix with an allowed origin but is a different, attacker-controlled host.
+    attack_origins = [
+        f"http://localhost:{PORT}.evil.com",
+        f"http://localhost:{PORT}@evil.com",
+        f"http://localhost:{PORT}x",
+        f"http://127.0.0.1:{PORT}.attacker.com",
+        f"http://127.0.0.1:{PORT}@attacker.com",
+    ]
+    for origin in attack_origins:
+        r = _client(simple_graph, tmp_path).post(
+            "/api/ai/summary", json=ai_body, headers=_hdr(host=f"127.0.0.1:{PORT}", origin=origin)
+        )
+        assert r.status_code == 403, f"bypass leaked for origin={origin!r}: {r.status_code}"
+        assert r.json() == {"error": "Forbidden"}
 
 
 def test_security__post_no_origin_rejected_403(simple_graph, tmp_path, ai_body):

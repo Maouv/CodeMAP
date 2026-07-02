@@ -115,7 +115,7 @@ def create_app(
         """
         if request.method in ("POST", "PUT", "DELETE"):
             origin = request.headers.get("origin", "")
-            if not origin or not any(origin.startswith(a) for a in allowed):
+            if origin not in allowed:
                 return JSONResponse({"error": "Forbidden"}, status_code=403)
         return await call_next(request)
 

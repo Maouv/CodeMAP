@@ -1,15 +1,16 @@
-"""Integration tests for graps server API (BLUEPRINT §13.4)."""
+"""Integration tests for graps server API (BLUEPRINT §13.4).
+
+Phase 5: ``/api/ai/summary`` deprecated (keep route, return deprecation).
+``/api/ai/chat`` endpoint baru (stateless, build_ai_context + provider.chat).
+"""
 
 from __future__ import annotations
-
-import os
-import stat
 
 import pytest
 from fastapi.testclient import TestClient
 
 from graps.ai.provider import AIError
-from graps.server.app import create_app
+from graps.server.app import build_ai_context, create_app
 
 
 # --- fixtures & helpers -------------------------------------------------------
@@ -65,8 +66,8 @@ def ai_body():
     return {"file": "a.py", "function": "foo", "line": 1, "modified_at": "2026-01-01", "source": "def foo(): pass"}
 
 
-def _client(graph_data, tmp_path, port=PORT):
-    app = create_app(graph_data, port=port, cache_path=tmp_path / "cache.json")
+def _client(graph_data, tmp_path, port=PORT, scan_root=None):
+    app = create_app(graph_data, port=port, cache_path=tmp_path / "cache.json", scan_root=scan_root)
     return TestClient(app, base_url=f"http://127.0.0.1:{port}")
 
 
@@ -104,7 +105,6 @@ def test_get_graph__nodes_match_section7_schema(simple_graph, tmp_path):
 def test_get_graph__sanitized_constants_phase1_default(simple_graph, tmp_path):
     node = _client(simple_graph, tmp_path).get("/api/graph", headers=_hdr(host=f"127.0.0.1:{PORT}")).json()["nodes"][0]
     assert node["constants"] == []
-    # ponytail: Phase 2 akan ekstrak constants; test akan assert DB_PASSWORD -> [REDACTED] lewat full path
 
 
 # --- 4-9: security middleware --------------------------------------------------
@@ -132,9 +132,10 @@ def test_security__post_invalid_origin_403(simple_graph, tmp_path, ai_body):
     )
     assert r.status_code == 403
     assert r.json() == {"error": "Forbidden"}
+
+
 def test_security__post_origin_prefix_bypass_rejected_403(simple_graph, tmp_path, ai_body):
     # CSRF guard must exact-match Origin, not startswith() (report-bug-server Finding 1).
-    # Each shares a prefix with an allowed origin but is a different, attacker-controlled host.
     attack_origins = [
         f"http://localhost:{PORT}.evil.com",
         f"http://localhost:{PORT}@evil.com",
@@ -157,6 +158,20 @@ def test_security__post_no_origin_rejected_403(simple_graph, tmp_path, ai_body):
     assert r.json() == {"error": "Forbidden"}
 
 
+def test_security__chat_post_invalid_origin_403(simple_graph, tmp_path):
+    # Chat juga POST → CSRF guard tetap jalan.
+    r = _client(simple_graph, tmp_path).post(
+        "/api/ai/chat", json={"message": "hi"}, headers=_hdr(host=f"127.0.0.1:{PORT}", origin="http://evil.com")
+    )
+    assert r.status_code == 403
+    assert r.json() == {"error": "Forbidden"}
+
+
+def test_security__chat_post_no_origin_rejected_403(simple_graph, tmp_path):
+    r = _client(simple_graph, tmp_path).post("/api/ai/chat", json={"message": "hi"}, headers=_hdr(host=f"127.0.0.1:{PORT}"))
+    assert r.status_code == 403
+
+
 def test_security__post_valid_origin_passes(simple_graph, tmp_path, ai_body, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -166,143 +181,223 @@ def test_security__post_valid_origin_passes(simple_graph, tmp_path, ai_body, mon
     assert r.status_code != 403
 
 
-# --- 10-16: AI summary --------------------------------------------------------
+# --- /api/ai/summary DEPRECATED (Phase 5) ------------------------------------
 
 
-def test_ai_summary__no_api_key_returns_disabled(simple_graph, tmp_path, ai_body, monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+def test_ai_summary__deprecated_response(simple_graph, tmp_path, ai_body):
+    # Route tetap, return deprecation response (logic provider/cache tidak jalan).
     r = _client(simple_graph, tmp_path).post(
         "/api/ai/summary", json=ai_body, headers=_hdr(host=f"127.0.0.1:{PORT}", origin=f"http://127.0.0.1:{PORT}")
     )
     assert r.status_code == 200
-    assert r.json() == {"enabled": False, "reason": "no_api_key"}
+    assert r.json() == {"deprecated": True, "reason": "use /api/ai/chat"}
 
 
-def test_ai_summary__mocked_provider_returns_summary(simple_graph, tmp_path, ai_body, monkeypatch):
+# --- /api/ai/chat (Phase 5) --------------------------------------------------
+
+
+def test_chat__empty_message_rejected(simple_graph, tmp_path):
+    r = _client(simple_graph, tmp_path).post(
+        "/api/ai/chat", json={"message": "   "}, headers=_hdr(host=f"127.0.0.1:{PORT}", origin=f"http://127.0.0.1:{PORT}")
+    )
+    assert r.status_code == 200
+    assert r.json() == {"enabled": False, "reason": "empty_message", "warnings": []}
+
+
+def test_chat__no_api_key_returns_disabled(simple_graph, tmp_path, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    r = _client(simple_graph, tmp_path).post(
+        "/api/ai/chat", json={"message": "why?", "tagged": ["a.py"]},
+        headers=_hdr(host=f"127.0.0.1:{PORT}", origin=f"http://127.0.0.1:{PORT}"),
+    )
+    assert r.status_code == 200
+    j = r.json()
+    assert j["enabled"] is False and j["reason"] == "no_api_key", j
+    # no scan_root → build_ai_context returns ("", []).
+    assert j["warnings"] == [], j
+
+
+def test_chat__mocked_provider_returns_reply(simple_graph, tmp_path, monkeypatch):
+    captured = {}
+
     class Fake:
         name = "fake"
-        def generate_summary(self, src, ctx):
-            return {"role": "r", "importance": "i", "hidden_assumption": "h"}
+        def chat(self, messages, context):
+            captured["messages"] = messages
+            captured["context"] = context
+            return "debug answer"
 
     monkeypatch.setattr("graps.ai.provider.get_provider", lambda: Fake())
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
     r = _client(simple_graph, tmp_path).post(
-        "/api/ai/summary", json=ai_body, headers=_hdr(host=f"127.0.0.1:{PORT}", origin=f"http://127.0.0.1:{PORT}")
+        "/api/ai/chat",
+        json={"message": "why foo?", "tagged": [], "history": [{"role": "assistant", "content": "hi"}]},
+        headers=_hdr(host=f"127.0.0.1:{PORT}", origin=f"http://127.0.0.1:{PORT}"),
     )
-    assert r.status_code == 200
     j = r.json()
-    assert j["enabled"] is True and j["cached"] is False
-    for k in ("role", "importance", "hidden_assumption"):
-        assert k in j["summary"]
-    assert j["provider"] == "fake"
+    assert j["enabled"] is True and j["reply"] == "debug answer", j
+    # history + message appended.
+    assert captured["messages"] == [
+        {"role": "assistant", "content": "hi"},
+        {"role": "user", "content": "why foo?"},
+    ], captured["messages"]
 
 
-def test_ai_summary__auth_failed_error_type(simple_graph, tmp_path, ai_body, monkeypatch):
+def test_chat__mocked_auth_failed(simple_graph, tmp_path, monkeypatch):
     class Fake:
         name = "fake"
-        def generate_summary(self, src, ctx):
+        def chat(self, messages, context):
             raise AIError("auth_failed")
 
     monkeypatch.setattr("graps.ai.provider.get_provider", lambda: Fake())
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
     r = _client(simple_graph, tmp_path).post(
-        "/api/ai/summary", json=ai_body, headers=_hdr(host=f"127.0.0.1:{PORT}", origin=f"http://127.0.0.1:{PORT}")
+        "/api/ai/chat", json={"message": "hi"},
+        headers=_hdr(host=f"127.0.0.1:{PORT}", origin=f"http://127.0.0.1:{PORT}"),
     )
     j = r.json()
-    assert j == {"enabled": True, "error_type": "auth_failed"}
+    assert j["enabled"] is True and j["error_type"] == "auth_failed", j
     body_text = r.text.lower()
     assert "key" not in body_text and "apikey" not in body_text
 
 
-def test_ai_summary__rate_limited_with_retry_after(simple_graph, tmp_path, ai_body, monkeypatch):
+def test_chat__rate_limited_with_retry_after(simple_graph, tmp_path, monkeypatch):
     class Fake:
         name = "fake"
-        def generate_summary(self, src, ctx):
+        def chat(self, messages, context):
             raise AIError("rate_limited", retry_after=15)
 
     monkeypatch.setattr("graps.ai.provider.get_provider", lambda: Fake())
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
     r = _client(simple_graph, tmp_path).post(
-        "/api/ai/summary", json=ai_body, headers=_hdr(host=f"127.0.0.1:{PORT}", origin=f"http://127.0.0.1:{PORT}")
+        "/api/ai/chat", json={"message": "hi"},
+        headers=_hdr(host=f"127.0.0.1:{PORT}", origin=f"http://127.0.0.1:{PORT}"),
     )
     j = r.json()
-    assert j["error_type"] == "rate_limited" and j["retry_after"] == 15
+    assert j["error_type"] == "rate_limited" and j["retry_after"] == 15, j
 
 
-def test_ai_summary__timeout_error_type(simple_graph, tmp_path, ai_body, monkeypatch):
+def test_chat__sdk_not_installed_returns_disabled(simple_graph, tmp_path, monkeypatch):
     class Fake:
         name = "fake"
-        def generate_summary(self, src, ctx):
-            raise AIError("timeout")
+        def chat(self, messages, context):
+            raise AIError("sdk_not_installed")
 
     monkeypatch.setattr("graps.ai.provider.get_provider", lambda: Fake())
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
     r = _client(simple_graph, tmp_path).post(
-        "/api/ai/summary", json=ai_body, headers=_hdr(host=f"127.0.0.1:{PORT}", origin=f"http://127.0.0.1:{PORT}")
+        "/api/ai/chat", json={"message": "hi"},
+        headers=_hdr(host=f"127.0.0.1:{PORT}", origin=f"http://127.0.0.1:{PORT}"),
     )
-    assert r.json()["error_type"] == "timeout"
+    j = r.json()
+    assert j["enabled"] is False and j["reason"] == "sdk_not_installed", j
 
 
-def test_ai_summary__caches_result(simple_graph, tmp_path, ai_body, monkeypatch):
-    calls = 0
-
-    class Fake:
-        name = "fake"
-        def generate_summary(self, src, ctx):
-            nonlocal calls; calls += 1
-            return {"role": "r", "importance": "i", "hidden_assumption": "h"}
-
-    monkeypatch.setattr("graps.ai.provider.get_provider", lambda: Fake())
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
-    c = _client(simple_graph, tmp_path)
-    hdrs = _hdr(host=f"127.0.0.1:{PORT}", origin=f"http://127.0.0.1:{PORT}")
-    r1 = c.post("/api/ai/summary", json=ai_body, headers=hdrs)
-    assert r1.json()["cached"] is False
-    r2 = c.post("/api/ai/summary", json=ai_body, headers=hdrs)
-    assert r2.json()["cached"] is True
-    assert calls == 1
-    mode = stat.S_IMODE(os.stat(tmp_path / "cache.json").st_mode)
-    assert mode == 0o600
+# --- build_ai_context + scan_root --------------------------------------------
 
 
-def test_ai_summary__cache_invalidation_on_modified_at_change(simple_graph, tmp_path, ai_body, monkeypatch):
-    calls = 0
+def test_chat__build_context_with_scan_root(simple_graph, tmp_path, monkeypatch):
+    # Tulis source asli ke scan_root (tmp_path) supaya build_ai_context baca disk.
+    (tmp_path / "a.py").write_text("def foo():\n    return 42\n\ndef bar(): pass\n")
+    # Update graph dengan line_end supaya function body di-extract presisi.
+    graph = {
+        **simple_graph,
+        "nodes": [{
+            **simple_graph["nodes"][0],
+            "functions": [{
+                **simple_graph["nodes"][0]["functions"][0],
+                "line_start": 1, "line_end": 2,
+            }],
+        }],
+    }
+    captured = {}
 
     class Fake:
         name = "fake"
-        def generate_summary(self, src, ctx):
-            nonlocal calls; calls += 1
-            return {"role": "r", "importance": "i", "hidden_assumption": "h"}
+        def chat(self, messages, context):
+            captured["context"] = context
+            return "ok"
 
     monkeypatch.setattr("graps.ai.provider.get_provider", lambda: Fake())
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
-    c = _client(simple_graph, tmp_path)
-    hdrs = _hdr(host=f"127.0.0.1:{PORT}", origin=f"http://127.0.0.1:{PORT}")
-    body2 = {**ai_body, "modified_at": "2026-02-01"}
-    c.post("/api/ai/summary", json=ai_body, headers=hdrs)
-    r2 = c.post("/api/ai/summary", json=body2, headers=hdrs)
-    assert r2.json()["cached"] is False
-    assert calls == 2
+    r = _client(graph, tmp_path, scan_root=tmp_path).post(
+        "/api/ai/chat", json={"message": "why 42?", "tagged": ["a.py::foo"]},
+        headers=_hdr(host=f"127.0.0.1:{PORT}", origin=f"http://127.0.0.1:{PORT}"),
+    )
+    j = r.json()
+    assert j["enabled"] is True and j["reply"] == "ok", j
+    # context mengandung function body dari disk (hanya foo, bukan bar).
+    assert "def foo" in captured["context"], captured["context"]
+    assert "return 42" in captured["context"], captured["context"]
+    assert "def bar" not in captured["context"], captured["context"]
 
 
-def test_ai_summary__rejects_empty_source(simple_graph, tmp_path, ai_body, monkeypatch):
-    # ponytail: trust-boundary guard — source kosong tidak boleh bill AI (Finding 7)
-    called = {"n": 0}
+def test_chat__credential_file_excluded(simple_graph, tmp_path, monkeypatch):
+    (tmp_path / ".env").write_text("SECRET=hunter2\nDB_PASSWORD=hunter3")
+    captured = {}
 
     class Fake:
         name = "fake"
-
-        def generate_summary(self, src, ctx):
-            called["n"] += 1
-            return {"role": "r", "importance": "i", "hidden_assumption": "h"}
+        def chat(self, messages, context):
+            captured["context"] = context
+            return "ok"
 
     monkeypatch.setattr("graps.ai.provider.get_provider", lambda: Fake())
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
-    c = _client(simple_graph, tmp_path)
-    hdrs = _hdr(host=f"127.0.0.1:{PORT}", origin=f"http://127.0.0.1:{PORT}")
+    r = _client(simple_graph, tmp_path, scan_root=tmp_path).post(
+        "/api/ai/chat", json={"message": "x", "tagged": [".env"]},
+        headers=_hdr(host=f"127.0.0.1:{PORT}", origin=f"http://127.0.0.1:{PORT}"),
+    )
+    j = r.json()
+    assert any(w["reason"] == "credential_file_excluded" for w in j["warnings"]), j
+    assert "hunter2" not in captured["context"], captured["context"]
+    assert "hunter3" not in captured["context"], captured["context"]
 
-    for empty in ("", "   "):
-        r = c.post("/api/ai/summary", json={**ai_body, "source": empty}, headers=hdrs)
-        assert r.json() == {"enabled": False, "reason": "no_source"}, empty
-    assert called["n"] == 0  # provider tidak dipanggil untuk source kosong
+
+def test_chat__no_scan_root_empty_context(simple_graph, tmp_path, monkeypatch):
+    # scan_root=None → build_ai_context return ("", []) — backward-compat test.
+    captured = {}
+
+    class Fake:
+        name = "fake"
+        def chat(self, messages, context):
+            captured["context"] = context
+            return "ok"
+
+    monkeypatch.setattr("graps.ai.provider.get_provider", lambda: Fake())
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    r = _client(simple_graph, tmp_path, scan_root=None).post(
+        "/api/ai/chat", json={"message": "hi", "tagged": ["a.py"]},
+        headers=_hdr(host=f"127.0.0.1:{PORT}", origin=f"http://127.0.0.1:{PORT}"),
+    )
+    j = r.json()
+    assert j["enabled"] is True and j["reply"] == "ok", j
+    assert captured["context"] == "", captured["context"]
+    assert j["warnings"] == [], j
+
+
+# --- build_ai_context unit (isolated) ----------------------------------------
+
+
+def test_build_ai_context__empty_when_no_tagged(simple_graph, tmp_path):
+    ctx, warns = build_ai_context([], simple_graph, tmp_path)
+    assert ctx == "" and warns == []
+
+
+def test_build_ai_context__empty_when_no_scan_root(simple_graph, tmp_path):
+    ctx, warns = build_ai_context(["a.py"], simple_graph, None)
+    assert ctx == "" and warns == []
+
+
+def test_build_ai_context__credential_file_warning(simple_graph, tmp_path):
+    (tmp_path / ".env").write_text("SECRET=x")
+    ctx, warns = build_ai_context([".env"], simple_graph, tmp_path)
+    assert any(w["reason"] == "credential_file_excluded" for w in warns), warns
+    assert "SECRET=x" not in ctx, ctx
+
+
+def test_build_ai_context__file_not_in_graph_warning(simple_graph, tmp_path):
+    (tmp_path / "unknown.py").write_text("x = 1")
+    ctx, warns = build_ai_context(["unknown.py"], simple_graph, tmp_path)
+    assert any(w["reason"] == "file_not_in_graph" for w in warns), warns

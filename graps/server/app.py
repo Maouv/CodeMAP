@@ -4,23 +4,24 @@ Module ini hanya tahu cara menyusun :class:`FastAPI` dengan:
 
 - middleware keamanan ``enforce_origin`` + ``validate_host`` (BLUEPRINT §11),
 - route ``GET /api/graph`` yang mengembalikan ``graph_data`` apa adanya,
-- route ``POST /api/ai/summary`` yang dispatch ke ``graps.ai.provider`` dan
-  cache hasilnya via ``graps.ai.cache``,
+- route ``POST /api/ai/chat`` (Phase 5) yang assemble context via
+  ``build_ai_context`` lalu dispatch ke ``graps.ai.provider.chat``,
+- route ``POST /api/ai/summary`` (DEPRECATED Phase 5 — keep route, return
+  deprecation response; logic provider/cache tidak jalan),
 - mount static frontend di ``/`` (paling akhir supaya API tidak ke-shadow).
 
 Pinning host ``127.0.0.1`` adalah tanggung jawab caller (``cli.py``). Module
 ini cuma butuh ``port`` untuk membentuk daftar origin yang diizinkan.
 
 ponytail: tidak pakai ``APIRouter``/DI framework — semua route di satu file,
-``cache_path`` di-close-over dari ``create_app``. Pindah ke router kalau
-endpoint sudah lewat ~10.
+``cache_path`` + ``scan_root`` di-close-over dari ``create_app``. Pindah ke
+router kalau endpoint sudah lewat ~10.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +41,6 @@ if __name__ == "__main__":
 # ponytail: import modul, BUKAN ``from ... import get_provider``. Supaya test
 # (dan integrasi lain) bisa monkeypatch ``provider_module.get_provider`` dan
 # perubahan terlihat di sini juga.
-from graps.ai import cache as cache_module  # noqa: E402
 from graps.ai import provider as provider_module  # noqa: E402
 from graps.ai.provider import AIError  # noqa: E402
 
@@ -51,11 +51,10 @@ DEFAULT_CACHE_PATH: Path = Path.cwd() / ".graps" / "cache.json"
 
 
 class SummaryRequest(BaseModel):
-    """Body untuk ``POST /api/ai/summary`` (lihat BLUEPRINT §10).
+    """Body untuk ``POST /api/ai/summary`` (DEPRECATED Phase 5).
 
-    Phase 1 trust input: frontend mengirim ``source`` mentah dari file yang
-    sudah dia baca via ``GET /api/graph`` + fetch lokal. Tidak ada validasi
-    panjang/charset di sini — provider yang akan menolak kalau over-limit.
+    Dipertahankan supaya test/import lama tidak break. Logic provider/cache
+    tidak jalan — route hanya return deprecation response.
     """
 
     file: str
@@ -65,10 +64,215 @@ class SummaryRequest(BaseModel):
     source: str
 
 
+class ChatRequest(BaseModel):
+    """Body untuk ``POST /api/ai/chat`` (Phase 5).
+
+    ``message``  : pertanyaan user (raw text).
+    ``tagged``   : list tag ``"file.py"`` atau ``"file.py::function"``.
+    ``history``  : ``[{"role": "user"|"assistant", "content": "..."}]``.
+    """
+
+    message: str
+    tagged: list[str] = []
+    history: list[dict[str, str]] = []
+
+
+# --- Credential file exclusion (Option C — user tidak intend share) ----------
+
+_CREDENTIAL_FILES = {
+    ".env", ".env.local", ".env.production", ".env.development",
+    "credentials.json", "secrets.json", "secret.json",
+}
+_CREDENTIAL_EXTS = {".pem", ".key", ".p12", ".pfx"}
+
+
+def _is_credential_file(rel_path: str) -> bool:
+    """True kalau ``rel_path`` adalah file credential yang di-hard-exclude
+    dari AI context."""
+    name = Path(rel_path).name.lower()
+    if name in _CREDENTIAL_FILES:
+        return True
+    if Path(rel_path).suffix.lower() in _CREDENTIAL_EXTS:
+        return True
+    if name.startswith(".env."):
+        return True
+    return False
+
+
+def _approx_tokens(text: str) -> int:
+    """Estimasi token kasar. ponytail: ``len(text)//4`` (~4 chars/token untuk
+    English + code). Ceiling: kadang under/over budget. Upgrade path: tiktoken
+    kalau provider OpenAI + akurasi critical."""
+    return max(len(text) // 4, 1)
+
+
+def _truncate(text: str, budget_tokens: int) -> str:
+    """Truncate ``text`` ke ~``budget_tokens`` token, marker
+    ``... [truncated, N lines omitted]`` kalau terpotong."""
+    if _approx_tokens(text) <= budget_tokens:
+        return text
+    lines = text.split("\n")
+    out: list[str] = []
+    used = 0
+    for ln in lines:
+        cost = _approx_tokens(ln) + 1  # +1 for the newline
+        if used + cost > budget_tokens:
+            break
+        out.append(ln)
+        used += cost
+    omitted = len(lines) - len(out)
+    if omitted > 0:
+        out.append(f"... [truncated, {omitted} lines omitted]")
+    return "\n".join(out)
+
+
+def _format_function_metadata(fn: dict[str, Any], rel: str) -> str:
+    """Susun [Graph Context] block untuk satu function."""
+    name = fn.get("name", "?")
+    ls = fn.get("line_start")
+    le = fn.get("line_end")
+    rng = f"{ls}-{le}" if ls and le else str(ls or "?")
+    callers = fn.get("callers") or []
+    callees = fn.get("callees") or []
+    risks = fn.get("risks") or []
+    params = fn.get("params") or []
+    returns = fn.get("returns")
+    lines = [f"Function: {name} ({rel}:{rng})"]
+    if callers:
+        lines.append("Called by: " + ", ".join(str(c) for c in callers))
+    if callees:
+        lines.append("Calls: " + ", ".join(str(c) for c in callees))
+    if params:
+        lines.append("Params: " + ", ".join(str(p) for p in params))
+    if returns:
+        lines.append(f"Returns: {returns}")
+    if risks:
+        lines.append("Risk flags: " + "; ".join(
+            r.get("message") or r.get("type") or str(r) for r in risks
+        ))
+    return "\n".join(lines)
+
+
+def _format_file_metadata(node: dict[str, Any]) -> str:
+    """Susun [Graph Context] block untuk satu file node."""
+    rel = node.get("path") or node.get("id") or "?"
+    fns = node.get("functions") or []
+    consts = node.get("constants") or []
+    lines = [f"File: {rel}"]
+    if fns:
+        lines.append("Functions: " + ", ".join(f.get("name", "?") for f in fns))
+    if consts:
+        lines.append("Constants: " + ", ".join(
+            f"{c.get('name','?')}={c.get('value','?')}" for c in consts
+        ))
+    return "\n".join(lines)
+
+
+def _extract_function_body(source: str, line_start: int | None, line_end: int | None) -> str:
+    """Ambil baris ``line_start..line_end`` (1-based) dari ``source``.
+    ponytail: kalau line_end None, ambil sampai EOF. Kalau line_start None,
+    return seluruh source (fallback aman)."""
+    if line_start is None:
+        return source
+    src_lines = source.split("\n")
+    start = max(line_start - 1, 0)
+    if line_end is None:
+        return "\n".join(src_lines[start:])
+    end = min(line_end, len(src_lines))
+    return "\n".join(src_lines[start:end])
+
+
+def build_ai_context(
+    tagged: list[str],
+    graph: dict[str, Any],
+    scan_root: Path | None,
+    max_tokens: int = 8000,
+) -> tuple[str, list[dict[str, str]]]:
+    """Assemble context dari tagged items untuk dikirim ke AI (Option C).
+
+    Per tagged item (format ``"file.py"`` atau ``"file.py::function"``):
+    1. Graph metadata (callers, callees, risk flags, params, returns, range).
+    2. Source dari disk — function body kalau tag fungsi, file truncated
+       kalau tag file.
+    3. ``.env``/credential exclusion → skip source, catat warning.
+    4. Token budget per item, truncate dengan ``... [truncated]``.
+
+    Return ``(context_str, warnings)`` di mana ``warnings =
+    [{file, reason}, ...]``.
+    """
+    if not tagged or scan_root is None:
+        return "", []
+
+    nodes = {n.get("id"): n for n in (graph.get("nodes") or []) if isinstance(n, dict)}
+    per_item = max(max_tokens // max(len(tagged), 1), 1)
+
+    parts: list[str] = []
+    warnings: list[dict[str, str]] = []
+
+    for tag in tagged:
+        if "::" in tag:
+            rel_path, fn_name = tag.split("::", 1)
+        else:
+            rel_path, fn_name = tag, None
+
+        node = nodes.get(rel_path)
+        meta_block = ""
+        if node is not None:
+            if fn_name is not None:
+                fns = node.get("functions") or []
+                fn = next((f for f in fns if f.get("name") == fn_name), None)
+                if fn is not None:
+                    meta_block = _format_function_metadata(fn, rel_path)
+                else:
+                    warnings.append({"file": rel_path, "reason": "function_not_found"})
+                    meta_block = f"Function: {fn_name} (not found in {rel_path})"
+            else:
+                meta_block = _format_file_metadata(node)
+        else:
+            warnings.append({"file": rel_path, "reason": "file_not_in_graph"})
+            meta_block = f"File: {rel_path} (not in graph)"
+
+        # Credential hard-exclude — source tidak dibaca, warning dicatat.
+        if _is_credential_file(rel_path):
+            warnings.append({"file": rel_path, "reason": "credential_file_excluded"})
+            parts.append(f"[Graph Context]\n{meta_block}\n\n[Source Context]\n<credential file excluded — source not sent>")
+            continue
+
+        # Baca source dari disk.
+        source_text: str | None = None
+        try:
+            raw = (scan_root / rel_path).read_text(errors="replace")
+            if fn_name is not None and node is not None:
+                fns = node.get("functions") or []
+                fn = next((f for f in fns if f.get("name") == fn_name), None)
+                if fn is not None:
+                    source_text = _extract_function_body(
+                        raw, fn.get("line_start"), fn.get("line_end")
+                    )
+                else:
+                    source_text = raw
+            else:
+                source_text = raw
+        except (OSError, UnicodeDecodeError):
+            warnings.append({"file": rel_path, "reason": "source_unreadable"})
+            source_text = None
+
+        src_budget = per_item - _approx_tokens(meta_block)
+        if source_text is not None and src_budget > 0:
+            src_block = _truncate(source_text, src_budget)
+        else:
+            src_block = "<no source available>"
+
+        parts.append(f"[Graph Context]\n{meta_block}\n\n[Source Context]\n{src_block}")
+
+    return "\n\n---\n\n".join(parts), warnings
+
+
 def create_app(
     graph_data: dict[str, Any],
     port: int,
     cache_path: Path | None = None,
+    scan_root: Path | None = None,
 ) -> FastAPI:
     """Bangun :class:`FastAPI` lengkap dengan middleware, route, dan static mount.
 
@@ -80,18 +284,13 @@ def create_app(
         Port yang akan dipakai uvicorn — dipakai untuk membentuk daftar origin
         & host yang sah (``localhost:<port>`` / ``127.0.0.1:<port>``).
     cache_path:
-        Lokasi file cache AI summary. ``None`` → :data:`DEFAULT_CACHE_PATH`.
-        Caller (CLI) yang boleh memilih, frontend tidak.
+        Lokasi file cache AI summary (DEPRECATED Phase 5). ``None`` →
+        :data:`DEFAULT_CACHE_PATH`. Caller (CLI) yang boleh memilih.
+    scan_root:
+        Path absolut untuk baca source dari disk (Option C). ``None`` untuk
+        backward-compat test yang tidak butuh baca source. Tidak masuk graph
+        JSON (M-03 aman — meta.root tetap relatif ".").
     """
-    if cache_path is None:
-        cache_path = DEFAULT_CACHE_PATH
-
-    # report-bug-finder Finding 13: in-memory cache layer supaya cache-hit O(1),
-    # bukan O(file_size) read + json.loads setiap POST /api/ai/summary.
-    # ponytail: dict polos scoped per create_app() call, bukan module-level,
-    # supaya test fixture terisolasi.
-    _mem_cache: dict[str, dict[str, Any]] = {}
-
     app = FastAPI()
     allowed = (f"http://localhost:{port}", f"http://127.0.0.1:{port}")
 
@@ -134,79 +333,45 @@ def create_app(
 
     @app.post("/api/ai/summary")
     def post_summary(req: SummaryRequest) -> dict[str, object]:
-        """Generate (atau ambil dari cache) AI summary untuk satu function.
+        """DEPRECATED — Phase 5. Gunakan ``/api/ai/chat``.
+
+        Route + ``SummaryRequest`` + cache import tetap (handoff: keep tapi
+        disable) supaya tidak break import/test lama. Logic provider/cache
+        tidak jalan.
+        """
+        return {"deprecated": True, "reason": "use /api/ai/chat"}
+
+    @app.post("/api/ai/chat")
+    def post_chat(req: ChatRequest) -> dict[str, Any]:
+        """Chat endpoint (Phase 5, stateless).
 
         Semua error AI dikembalikan sebagai HTTP 200 dengan ``error_type``
         supaya browser tidak memunculkan dialog auth dan frontend bisa
         memutuskan UI sendiri (BLUEPRINT §10).
         """
-        # ponytail: trust-boundary — source kosong ditolak sebelum provider dipanggil (Finding 7)
-        if not req.source.strip():
-            return {"enabled": False, "reason": "no_source"}
+        if not req.message.strip():
+            return {"enabled": False, "reason": "empty_message", "warnings": []}
+
+        context, warnings = build_ai_context(req.tagged, graph_data, scan_root)
+
         provider = provider_module.get_provider()
         if provider is None:
-            return {"enabled": False, "reason": "no_api_key"}
+            return {"enabled": False, "reason": "no_api_key", "warnings": warnings}
 
-        key = f"{req.file}::{req.function}"
-        # ponytail: cek in-memory cache dulu — O(1) vs O(file_size) parse (Finding 13)
-        mem_hit = _mem_cache.get(key)
-        if mem_hit and cache_module.is_valid(mem_hit, req.modified_at):
-            return {
-                "enabled": True,
-                "cached": True,
-                "summary": mem_hit["summary"],
-                "provider": mem_hit["provider"],
-            }
-        cache = cache_module.read_cache(cache_path)
-        hit = cache["entries"].get(key)
-        if hit and cache_module.is_valid(hit, req.modified_at):
-            return {
-                "enabled": True,
-                "cached": True,
-                "summary": hit["summary"],
-                "provider": hit["provider"],
-            }
-
+        messages = req.history + [{"role": "user", "content": req.message}]
         try:
-            summary = provider.generate_summary(
-                req.source,
-                {"name": req.function, "file": req.file, "line": req.line},
-            )
+            reply = provider.chat(messages, context)
         except AIError as e:
-            # sdk_not_installed = AI tidak tersedia fungsional → enabled False.
             if e.error_type == "sdk_not_installed":
-                return {"enabled": False, "reason": "sdk_not_installed"}
-            payload: dict[str, Any] = {"enabled": True, "error_type": e.error_type}
+                return {"enabled": False, "reason": "sdk_not_installed", "warnings": warnings}
+            payload: dict[str, Any] = {"enabled": True, "error_type": e.error_type, "warnings": warnings}
             if e.error_type == "rate_limited" and e.retry_after is not None:
                 payload["retry_after"] = e.retry_after
             return payload
-        # ponytail: SENGAJA tidak catch ``Exception`` di sini — bug nyata (mis.
-        # bug di cache.py) harus bubble jadi 500 supaya kelihatan, bukan
-        # dibungkus jadi error_type="unknown".
+        # ponytail: SENGAJA tidak catch ``Exception`` di sini — bug nyata harus
+        # bubble jadi 500 supaya kelihatan, bukan dibungkus jadi error_type="unknown".
 
-        cache_module.write_cache(
-            cache_path,
-            key,
-            {
-                "generated_at": datetime.now(timezone.utc).isoformat(),
-                "file_modified_at": req.modified_at,
-                "provider": provider.name,
-                "summary": summary,
-            },
-        )
-        # ponytail: update in-memory cache juga (Finding 13)
-        _mem_cache[key] = {
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "file_modified_at": req.modified_at,
-            "provider": provider.name,
-            "summary": summary,
-        }
-        return {
-            "enabled": True,
-            "cached": False,
-            "summary": summary,
-            "provider": provider.name,
-        }
+        return {"enabled": True, "reply": reply, "warnings": warnings}
 
     # Static mount HARUS terakhir — kalau di-mount sebelum route, "/" akan
     # menelan request dan API ter-shadow. Skip dengan warning kalau frontend
@@ -222,7 +387,6 @@ def create_app(
 if __name__ == "__main__":
     # Self-check: pakai TestClient supaya tidak perlu jalan uvicorn beneran.
     import os
-    import stat
     import tempfile
 
     from fastapi.testclient import TestClient
@@ -240,101 +404,111 @@ if __name__ == "__main__":
     saved_get_provider = provider_module.get_provider
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
-            cache_path = Path(tmpdir) / "cache.json"
-            app = create_app(GRAPH, port=PORT, cache_path=cache_path)
+            scan_root = Path(tmpdir)
+            (scan_root / "a.py").write_text("def foo():\n    return 42\n")
+            graph = {
+                "meta": {},
+                "nodes": [{
+                    "id": "a.py", "type": "file", "path": "a.py",
+                    "functions": [{"name": "foo", "line_start": 1, "line_end": 2,
+                                    "callers": [], "callees": [], "params": [],
+                                    "returns": None, "risks": []}],
+                    "constants": [], "imports": [], "classes": [], "risks": [],
+                }],
+                "edges": [], "warnings": [],
+            }
+            app = create_app(graph, port=PORT, scan_root=scan_root)
             client = TestClient(app, base_url=f"http://{HOST_OK}")
 
             # 1. GET /api/graph mengembalikan dict apa adanya.
             r = client.get("/api/graph", headers={"host": HOST_OK})
             assert r.status_code == 200, r.status_code
-            assert r.json() == GRAPH, r.json()
+            assert r.json() == graph, r.json()
 
-            # 2. Host header jahat ditolak 400.
-            r = client.get("/api/graph", headers={"host": "evil.com:1234"})
-            assert r.status_code == 400, r.status_code
-            assert r.json() == {"error": "Invalid Host"}, r.json()
-
-            body = {
-                "file": "a.py",
-                "function": "foo",
-                "line": 1,
-                "modified_at": "2026-01-01",
-                "source": "def foo(): pass",
-            }
+            # 2. /api/ai/summary deprecated response.
+            body = {"file": "a.py", "function": "foo", "line": 1,
+                    "modified_at": "2026-01-01", "source": "def foo(): pass"}
+            r = client.post("/api/ai/summary", json=body,
+                            headers={"host": HOST_OK, "origin": ORIGIN_OK})
+            assert r.status_code == 200, r.status_code
+            assert r.json() == {"deprecated": True, "reason": "use /api/ai/chat"}, r.json()
 
             # 3. Origin asing + Host valid → 403 (CSRF guard).
-            r = client.post(
-                "/api/ai/summary",
-                json=body,
-                headers={"host": HOST_OK, "origin": "http://evil.com"},
-            )
+            r = client.post("/api/ai/chat", json={"message": "hi"},
+                            headers={"host": HOST_OK, "origin": "http://evil.com"})
             assert r.status_code == 403, r.status_code
             assert r.json() == {"error": "Forbidden"}, r.json()
 
-            # 3b. Tanpa Origin (curl-style) → 403 (fail-closed CSRF guard, Finding 2).
-            r = client.post("/api/ai/summary", json=body, headers={"host": HOST_OK})
+            # 3b. Tanpa Origin (curl-style) → 403 (fail-closed CSRF guard).
+            r = client.post("/api/ai/chat", json={"message": "hi"},
+                            headers={"host": HOST_OK})
             assert r.status_code == 403, r.status_code
-            assert r.json() == {"error": "Forbidden"}, r.json()
 
-            # 4. Tanpa API key → enabled False, no_api_key.
-            r = client.post(
-                "/api/ai/summary",
-                json=body,
-                headers={"host": HOST_OK, "origin": ORIGIN_OK},
-            )
+            # 4. /api/ai/chat empty message → empty_message.
+            r = client.post("/api/ai/chat", json={"message": "   "},
+                            headers={"host": HOST_OK, "origin": ORIGIN_OK})
             assert r.status_code == 200, r.status_code
-            assert r.json() == {"enabled": False, "reason": "no_api_key"}, r.json()
+            assert r.json() == {"enabled": False, "reason": "empty_message", "warnings": []}, r.json()
 
-            # 5. Provider raise AIError("auth_failed") → status 200, error_type.
+            # 5. /api/ai/chat tanpa API key → no_api_key.
+            r = client.post("/api/ai/chat", json={"message": "why?", "tagged": ["a.py"]},
+                            headers={"host": HOST_OK, "origin": ORIGIN_OK})
+            assert r.status_code == 200, r.status_code
+            j = r.json()
+            assert j["enabled"] is False and j["reason"] == "no_api_key", j
+            # context tetap dibuild (warnings [] karena a.py ada di graph & readable).
+            assert j["warnings"] == [], j
+
+            # 6. Mocked provider returns reply.
+            class _FakeOK:
+                name = "fake"
+                last_ctx = ""
+                def chat(self, messages, context):
+                    _FakeOK.last_ctx = context
+                    return "debug answer"
+
+            provider_module.get_provider = lambda: _FakeOK()  # type: ignore[assignment,return-value]
+            r = client.post("/api/ai/chat",
+                            json={"message": "why return 42?", "tagged": ["a.py::foo"]},
+                            headers={"host": HOST_OK, "origin": ORIGIN_OK})
+            assert r.status_code == 200, r.status_code
+            j = r.json()
+            assert j["enabled"] is True and j["reply"] == "debug answer", j
+            # context mengandung function body dari disk.
+            assert "def foo" in _FakeOK.last_ctx, _FakeOK.last_ctx
+            assert "return 42" in _FakeOK.last_ctx, _FakeOK.last_ctx
+
+            # 7. Mocked auth_failed → error_type.
             class _FakeAuthFail:
                 name = "fake"
-
-                def generate_summary(self, src: str, ctx: dict[str, Any]) -> None:
+                def chat(self, messages, context):
                     raise AIError("auth_failed")
 
             provider_module.get_provider = lambda: _FakeAuthFail()  # type: ignore[assignment,return-value]
-            r = client.post(
-                "/api/ai/summary",
-                json=body,
-                headers={"host": HOST_OK, "origin": ORIGIN_OK},
-            )
+            r = client.post("/api/ai/chat", json={"message": "hi"},
+                            headers={"host": HOST_OK, "origin": ORIGIN_OK})
             assert r.status_code == 200, r.status_code
-            assert r.json() == {"enabled": True, "error_type": "auth_failed"}, r.json()
+            assert r.json()["error_type"] == "auth_failed", r.json()
+            assert "key" not in r.text.lower() and "apikey" not in r.text.lower()
 
-            # 6. Sukses + cache roundtrip.
-            class _FakeOK:
-                name = "fake"
-                calls = 0
-
-                def generate_summary(self, src: str, ctx: dict[str, Any]) -> dict[str, Any]:
-                    type(self).calls += 1
-                    return {"role": "r", "importance": "i", "hidden_assumption": "h"}
-
+            # 8. Credential file (.env) excluded — warning, source tidak dikirim.
             provider_module.get_provider = lambda: _FakeOK()  # type: ignore[assignment,return-value]
-            r1 = client.post(
-                "/api/ai/summary",
-                json=body,
-                headers={"host": HOST_OK, "origin": ORIGIN_OK},
-            )
-            assert r1.status_code == 200, r1.status_code
-            j1 = r1.json()
-            assert j1["enabled"] is True and j1["cached"] is False, j1
-            assert j1["summary"]["role"] == "r", j1
-            assert j1["provider"] == "fake", j1
+            (scan_root / ".env").write_text("SECRET=hunter2")
+            r = client.post("/api/ai/chat", json={"message": "x", "tagged": [".env"]},
+                            headers={"host": HOST_OK, "origin": ORIGIN_OK})
+            j = r.json()
+            assert any(w["reason"] == "credential_file_excluded" for w in j["warnings"]), j
+            assert "hunter2" not in _FakeOK.last_ctx, _FakeOK.last_ctx
 
-            r2 = client.post(
-                "/api/ai/summary",
-                json=body,
-                headers={"host": HOST_OK, "origin": ORIGIN_OK},
-            )
-            j2 = r2.json()
-            assert j2["cached"] is True, j2
-            assert j2["summary"]["role"] == "r", j2
-
-            # Cache file ada di tempdir dengan permission 0o600.
-            assert cache_path.exists(), cache_path
-            mode = stat.S_IMODE(os.stat(cache_path).st_mode)
-            assert mode == 0o600, oct(mode)
+            # 9. scan_root=None → context kosong (backward-compat).
+            provider_module.get_provider = saved_get_provider  # clear mock
+            app2 = create_app(GRAPH, port=PORT + 1, scan_root=None)
+            client2 = TestClient(app2, base_url=f"http://127.0.0.1:{PORT+1}")
+            r = client2.post("/api/ai/chat", json={"message": "hi", "tagged": ["a.py"]},
+                             headers={"host": f"127.0.0.1:{PORT+1}", "origin": f"http://127.0.0.1:{PORT+1}"})
+            j = r.json()
+            assert j["enabled"] is False and j["reason"] == "no_api_key", j
+            assert j["warnings"] == [], j  # no scan_root → no warnings
 
         print("app.py self-check OK")
     finally:

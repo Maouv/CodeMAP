@@ -234,7 +234,7 @@ def main(
         typer.echo(f"  ✗ Port {port} already in use. Try: graps . --port {port + 1}")
         raise typer.Exit(1)
 
-    fastapi_app = create_app(graph, port=port, cache_path=cache_path)
+    fastapi_app = create_app(graph, port=port, cache_path=cache_path, scan_root=path)
 
     typer.echo(f"  Server running at http://localhost:{port}")
     if not no_browser:

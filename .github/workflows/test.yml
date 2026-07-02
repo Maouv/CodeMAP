@@ -4,11 +4,12 @@ on:
   push:
     branches: ["**"]
   pull_request:
-    branches: [main, phase1-scanner-core]
+    branches: [main, phase1-scanner-core, development]
 
 jobs:
   test:
     runs-on: ubuntu-latest
+
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
@@ -31,19 +32,30 @@ jobs:
           python -m pytest tests/ -v --tb=short
 
       - name: Check no absolute paths leak in graph JSON
+        shell: bash
         run: |
-          python -c "
+          python <<'PY'
           from pathlib import Path
           from graps.scanner.graph_builder import build_graph
           from graps.scanner.ast_parser import safe_parse
-          import json, tempfile, os
+          import json
+          import tempfile
 
           tmp = Path(tempfile.mkdtemp())
-          (tmp / 'main.py').write_text('import os\ndef foo(): pass\n')
+
+          (tmp / "main.py").write_text(
+              "import os\n"
+              "def foo():\n"
+              "    pass\n"
+          )
+
           results = [safe_parse(p) for p in tmp.rglob("*.py")]
           graph = build_graph(results, root=tmp)
           dumped = json.dumps(graph)
-          assert str(tmp) not in dumped, 'Absolute path leaked into graph JSON'
-          print('Path leak check: OK')
-          "
 
+          assert str(tmp) not in dumped, (
+              "Absolute path leaked into graph JSON"
+          )
+
+          print("Path leak check: OK")
+          PY
